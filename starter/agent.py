@@ -14,8 +14,19 @@ STOPWORDS = {
     "that", "the", "this", "to", "want", "with", "would", "you", "looking",
 }
 
-MATERIAL_RE = re.compile(r"\b(cotton|polyester|nylon|leather|wool|spandex|silk|rayon|fabric|denim|linen)\b", re.I)
-COLOR_RE = re.compile(r"\b(black|white|blue|red|pink|green|brown|gray|grey|purple|yellow|orange|navy|beige)\b", re.I)
+# Word lists validated against catalog frequency (data/catalog.jsonl, 50K products)
+# rather than guessed from memory — see PR description for the frequency scan.
+MATERIAL_RE = re.compile(
+    r"\b(polyester|cotton|fabric|leather|spandex|mesh|lace|nylon|knit|fleece|suede|rayon|denim"
+    r"|elastane|jersey|canvas|acrylic|wool|satin|velvet|chiffon|faux leather|microfiber|viscose"
+    r"|silk|linen|flannel|cashmere)\b",
+    re.I,
+)
+COLOR_RE = re.compile(
+    r"\b(black|white|silver|blue|gold|red|grey|gray|green|pink|yellow|brown|navy|purple|orange"
+    r"|beige|khaki|tan|turquoise|burgundy|charcoal|multicolor|coral|olive|ivory|teal|mint|maroon|lavender)\b",
+    re.I,
+)
 BUDGET_RE = re.compile(r"\$\s?\d+|\bunder\s+\$?\d+|\bbudget\b", re.I)
 SIZE_RE = re.compile(r"\b(size|sizing|small|medium|large|x+l|x+s|wide|narrow)\b", re.I)
 STYLE_WORDS = ("style", "fit", "sleeve", "neck", "department", "casual", "formal")
