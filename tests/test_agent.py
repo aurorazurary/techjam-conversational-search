@@ -146,6 +146,21 @@ class AgentTest(unittest.TestCase):
         )
         self.assertNotEqual(first["recommendations"], second["recommendations"])
 
+    def test_default_diversity_and_fetch_cache_are_enabled(self) -> None:
+        self.assertEqual(self.agent.diversity_strength, 6.0)
+        first = self.agent._fetch('"shoes"', 10)
+        second = self.agent._fetch('"shoes"', 10)
+        self.assertIs(first, second)
+
+    def test_query_expansion_is_opt_in(self) -> None:
+        self.assertEqual(self.agent._expand_terms(["grey"]), ["grey"])
+        self.agent.expand_query_terms = True
+        self.assertEqual(self.agent._expand_terms(["grey"]), ["grey", "gray"])
+
+    def test_unknown_reranker_weight_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            Agent(self.agent.catalog_path, rerank_weights={"typo": 1.0})
+
     def test_reset_is_required(self) -> None:
         with self.assertRaises(RuntimeError):
             self.agent.respond("missing", "I need shoes", 1, 10)

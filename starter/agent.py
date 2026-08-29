@@ -41,6 +41,33 @@ OVERRIDE_MARKERS = (
 QUESTION_ORDER = (
     "material", "color", "style", "size", "use_case", "budget", "feature", "brand",
 )
+TERM_EXPANSIONS = {
+    "blouse": ("shirt", "top"),
+    "blouses": ("shirts", "tops"),
+    "grey": ("gray",),
+    "handbag": ("purse",),
+    "hoodie": ("sweatshirt",),
+    "mens": ("men",),
+    "purse": ("handbag",),
+    "sneaker": ("shoe",),
+    "sneakers": ("shoes",),
+    "tee": ("shirt",),
+    "tees": ("shirts",),
+    "trousers": ("pants",),
+    "womens": ("women",),
+}
+DEFAULT_RERANK_WEIGHTS = {
+    "route_score": 1.0,
+    "category_coverage": 8.0,
+    "category_phrase": 5.0,
+    "constraint_coverage": 13.0,
+    "constraint_title_coverage": 5.0,
+    "constraint_phrase": 18.0,
+    "price_compatibility": 1.0,
+    "profile_coverage": 0.5,
+    "rating_quality": 0.08,
+    "rating_popularity": 0.05,
+}
 
 
 def _text(value: object) -> str:
@@ -100,13 +127,43 @@ class SessionState:
         return True
 
 
+@dataclass(frozen=True)
+class ProductSignals:
+    normalized_corpus: str
+    normalized_categories: str
+    document_terms: frozenset[str]
+    title_terms: frozenset[str]
+    category_terms: frozenset[str]
+    price: float | None
+    rating: float
+    rating_count: int
+
+
 class Agent:
     """Offline conversational retrieval agent with stateful constraint reranking."""
 
-    def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
+    def __init__(
+        self,
+        catalog_path: str | Path = "data/catalog.jsonl",
+        *,
+        rerank_weights: dict[str, float] | None = None,
+        diversity_strength: float = 6.0,
+        broad_question_limit: int = 2,
+        expand_query_terms: bool = False,
+    ) -> None:
         self.catalog_path = Path(catalog_path)
+        unknown_weights = set(rerank_weights or {}) - set(DEFAULT_RERANK_WEIGHTS)
+        if unknown_weights:
+            unknown = ", ".join(sorted(unknown_weights))
+            raise ValueError(f"unknown reranker weights: {unknown}")
         self.connection = sqlite3.connect(":memory:")
         self._sessions: dict[str, SessionState] = {}
+        self.rerank_weights = {**DEFAULT_RERANK_WEIGHTS, **(rerank_weights or {})}
+        self.diversity_strength = max(0.0, float(diversity_strength))
+        self.broad_question_limit = max(1, int(broad_question_limit))
+        self.expand_query_terms = bool(expand_query_terms)
+        self._fetch_cache: dict[tuple[str, int], list[tuple]] = {}
+        self._product_signal_cache: dict[str, ProductSignals] = {}
         self._build_index()
 
     def _build_index(self) -> None:
@@ -213,8 +270,12 @@ class Agent:
     def _fetch(self, expression: str, limit: int) -> list[tuple]:
         if not expression:
             return []
+        cache_key = (expression, limit)
+        cached = self._fetch_cache.get(cache_key)
+        if cached is not None:
+            return cached
         try:
-            return self.connection.execute(
+            rows = self.connection.execute(
                 "SELECT parent_asin, title, categories, features, details, store, description, "
                 "price, average_rating, rating_number, "
                 "bm25(products, 0.0, 7.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.0, 0.0, 0.0) "
@@ -223,12 +284,27 @@ class Agent:
             ).fetchall()
         except sqlite3.OperationalError:
             return []
+        if len(self._fetch_cache) >= 1024:
+            self._fetch_cache.pop(next(iter(self._fetch_cache)))
+        self._fetch_cache[cache_key] = rows
+        return rows
+
+    def _expand_terms(self, terms: list[str]) -> list[str]:
+        if not self.expand_query_terms:
+            return terms
+        expanded: list[str] = []
+        for term in terms:
+            expanded.append(term)
+            expanded.extend(TERM_EXPANSIONS.get(term, ()))
+        return list(dict.fromkeys(expanded))
 
     def _candidate_rows(self, state: SessionState) -> dict[str, tuple[tuple, float]]:
         category_terms = _terms(state.category)
         constraint_terms = [term for value in state.constraints for term in _terms(value)]
         profile_terms = [term for value in state.profile_tags for term in _terms(value)]
-        all_terms = list(dict.fromkeys(category_terms + constraint_terms + profile_terms))[:80]
+        all_terms = self._expand_terms(
+            list(dict.fromkeys(category_terms + constraint_terms + profile_terms))
+        )[:80]
         candidates: dict[str, tuple[tuple, float]] = {}
 
         def add(rows: list[tuple], route_weight: float) -> None:
@@ -265,44 +341,29 @@ class Agent:
         relative_error = abs(price - requested) / max(requested, 1.0)
         return 5.0 * max(0.0, 1.0 - relative_error)
 
-    def _rerank_score(self, row: tuple, route_score: float, state: SessionState) -> float:
-        _, title, categories, features, details, store, description, raw_price, raw_rating, raw_count, _ = row
+    def _product_signals(self, row: tuple) -> ProductSignals:
+        (
+            _,
+            title,
+            categories,
+            features,
+            details,
+            store,
+            description,
+            raw_price,
+            raw_rating,
+            raw_count,
+            _,
+        ) = row
+        parent_asin = str(row[0])
+        cached = self._product_signal_cache.get(parent_asin)
+        if cached is not None:
+            return cached
         corpus = " ".join((title, categories, features, details, store, description))
-        normalized_corpus = _normalized(corpus)
-        document_terms = set(_terms(corpus))
-        title_terms = set(_terms(title))
-        category_document_terms = set(_terms(categories))
-        score = route_score
-
-        category_terms = set(_terms(state.category))
-        if category_terms:
-            category_coverage = len(category_terms & category_document_terms) / len(category_terms)
-            score += 8.0 * category_coverage
-            normalized_category = _normalized(state.category)
-            if normalized_category and normalized_category in _normalized(categories):
-                score += 5.0
-
-        for constraint in state.constraints:
-            terms = set(_terms(constraint))
-            if not terms:
-                continue
-            coverage = len(terms & document_terms) / len(terms)
-            title_coverage = len(terms & title_terms) / len(terms)
-            score += 13.0 * coverage * coverage
-            score += 5.0 * title_coverage
-            normalized_constraint = _normalized(constraint)
-            if normalized_constraint and normalized_constraint in normalized_corpus:
-                score += 18.0
-            try:
-                price = float(raw_price) if raw_price else None
-            except (TypeError, ValueError):
-                price = None
-            score += self._price_score(constraint, price)
-
-        profile_terms = set(term for tag in state.profile_tags for term in _terms(tag))
-        if profile_terms:
-            score += 0.5 * len(profile_terms & document_terms) / len(profile_terms)
-
+        try:
+            price = float(raw_price) if raw_price else None
+        except (TypeError, ValueError):
+            price = None
         try:
             rating = float(raw_rating) if raw_rating else 0.0
         except (TypeError, ValueError):
@@ -311,9 +372,106 @@ class Agent:
             rating_count = int(float(raw_count)) if raw_count else 0
         except (TypeError, ValueError):
             rating_count = 0
-        score += min(0.4, max(0.0, rating - 3.0) * 0.08)
-        score += min(0.6, math.log1p(max(0, rating_count)) * 0.05)
-        return score
+        signals = ProductSignals(
+            normalized_corpus=_normalized(corpus),
+            normalized_categories=_normalized(categories),
+            document_terms=frozenset(_terms(corpus)),
+            title_terms=frozenset(_terms(title)),
+            category_terms=frozenset(_terms(categories)),
+            price=price,
+            rating=rating,
+            rating_count=rating_count,
+        )
+        self._product_signal_cache[parent_asin] = signals
+        return signals
+
+    def _rerank_features(
+        self, row: tuple, route_score: float, state: SessionState
+    ) -> dict[str, float]:
+        signals = self._product_signals(row)
+        features = {name: 0.0 for name in DEFAULT_RERANK_WEIGHTS}
+        features["route_score"] = route_score
+
+        category_terms = set(_terms(state.category))
+        if category_terms:
+            features["category_coverage"] = (
+                len(category_terms & signals.category_terms) / len(category_terms)
+            )
+            normalized_category = _normalized(state.category)
+            features["category_phrase"] = float(
+                bool(
+                    normalized_category
+                    and normalized_category in signals.normalized_categories
+                )
+            )
+
+        for constraint in state.constraints:
+            terms = set(_terms(constraint))
+            if not terms:
+                continue
+            coverage = len(terms & signals.document_terms) / len(terms)
+            title_coverage = len(terms & signals.title_terms) / len(terms)
+            features["constraint_coverage"] += coverage * coverage
+            features["constraint_title_coverage"] += title_coverage
+            normalized_constraint = _normalized(constraint)
+            features["constraint_phrase"] += float(
+                bool(
+                    normalized_constraint
+                    and normalized_constraint in signals.normalized_corpus
+                )
+            )
+            features["price_compatibility"] += self._price_score(
+                constraint, signals.price
+            )
+
+        profile_terms = set(term for tag in state.profile_tags for term in _terms(tag))
+        if profile_terms:
+            features["profile_coverage"] = (
+                len(profile_terms & signals.document_terms) / len(profile_terms)
+            )
+
+        features["rating_quality"] = max(0.0, signals.rating - 3.0)
+        features["rating_popularity"] = min(
+            12.0, math.log1p(max(0, signals.rating_count))
+        )
+        return features
+
+    def _rerank_score(self, row: tuple, route_score: float, state: SessionState) -> float:
+        features = self._rerank_features(row, route_score, state)
+        return sum(self.rerank_weights[name] * value for name, value in features.items())
+
+    def _select_diverse(
+        self,
+        ranked: list[tuple[float, str]],
+        candidates: dict[str, tuple[tuple, float]],
+        top_k: int,
+    ) -> list[str]:
+        if not ranked or self.diversity_strength <= 0.0:
+            return [parent_asin for _, parent_asin in ranked[:top_k]]
+        pool = ranked[: max(100, top_k * 10)]
+        selected: list[str] = []
+        selected_title_terms: list[frozenset[str]] = []
+        while pool and len(selected) < top_k:
+            best_index = 0
+            best_score = float("-inf")
+            for index, (base_score, parent_asin) in enumerate(pool):
+                title_terms = self._product_signals(candidates[parent_asin][0]).title_terms
+                similarities = [
+                    len(title_terms & prior) / max(1, len(title_terms | prior))
+                    for prior in selected_title_terms
+                ]
+                diversified_score = base_score - self.diversity_strength * max(
+                    similarities, default=0.0
+                )
+                if diversified_score > best_score:
+                    best_index = index
+                    best_score = diversified_score
+            _, parent_asin = pool.pop(best_index)
+            selected.append(parent_asin)
+            selected_title_terms.append(
+                self._product_signals(candidates[parent_asin][0]).title_terms
+            )
+        return selected
 
     def _recommend(self, state: SessionState, top_k: int) -> list[dict]:
         candidates = self._candidate_rows(state)
@@ -325,12 +483,12 @@ class Agent:
             ),
             reverse=True,
         )
-        selected = [parent_asin for _, parent_asin in ranked[:top_k]]
+        selected = self._select_diverse(ranked, candidates, top_k)
         state.seen_recommendations.update(selected)
         return [{"parent_asin": parent_asin} for parent_asin in selected]
 
     def _next_question(self, state: SessionState) -> tuple[str, str]:
-        if not state.broad_exhausted and state.broad_answers < 2:
+        if not state.broad_exhausted and state.broad_answers < self.broad_question_limit:
             state.asked_attributes.append("other")
             if state.broad_answers == 0:
                 return (
