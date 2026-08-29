@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from starter.ranges import AttributeRange
 
 QUESTION_ORDER = (
     "material", "color", "style", "size", "use_case", "budget", "feature", "brand",
@@ -54,6 +58,7 @@ class Preference:
     attribute: str
     value: str
     hardness: float = HARDNESS_DISCLOSED
+    range: AttributeRange | None = None
 
     @property
     def is_hard(self) -> bool:
@@ -117,6 +122,14 @@ class PreferenceStore:
                 )
             return ("Is there one more must-have detail I should prioritize?", "other")
 
+        narrowable = self._range_narrowing_candidate()
+        if narrowable is not None:
+            label = narrowable.attribute.replace("_", " ")
+            return (
+                f"You mentioned {narrowable.value}. Could you be more specific about {label}?",
+                narrowable.attribute,
+            )
+
         for attr in QUESTION_ORDER:
             if attr not in self.asked_attributes and attr not in self.declined_attributes:
                 self.asked_attributes.append(attr)
@@ -124,3 +137,22 @@ class PreferenceStore:
                 return (f"Do you have a preference for {label}?", attr)
 
         return ("Is there another requirement that would help narrow these down?", "other")
+
+    def _range_narrowing_candidate(self) -> Preference | None:
+        """Find the preference with the widest range that would benefit from narrowing.
+
+        Returns None if many unasked attributes remain (new constraints are more
+        productive early in the conversation) or if no range is wide enough.
+        """
+        BREADTH_THRESHOLD = 0.4
+        unasked = sum(
+            1 for attr in QUESTION_ORDER
+            if attr not in self.asked_attributes and attr not in self.declined_attributes
+        )
+        if unasked >= 3:
+            return None
+        candidates = [
+            p for p in self.preferences
+            if p.range is not None and p.range.breadth() > BREADTH_THRESHOLD
+        ]
+        return max(candidates, key=lambda p: p.range.breadth()) if candidates else None

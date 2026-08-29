@@ -7,6 +7,7 @@ from pathlib import Path
 from starter.intents import Intent
 from starter.Preference import PreferenceStore
 from starter.Ranker import Ranker
+from starter.ranges import CatalogRegistryBuilder
 
 
 def _text(value: object) -> str:
@@ -44,6 +45,7 @@ class Agent:
         self._build_index()
         self.ranker = Ranker(
             self.connection,
+            catalog_registry=self.catalog_registry,
             rerank_weights=rerank_weights,
             diversity_strength=diversity_strength,
             expand_query_terms=expand_query_terms,
@@ -57,10 +59,12 @@ class Agent:
             "price UNINDEXED, average_rating UNINDEXED, rating_number UNINDEXED, "
             "tokenize='unicode61 remove_diacritics 2')"
         )
+        registry_builder = CatalogRegistryBuilder()
         batch: list[tuple[str, ...]] = []
         with self.catalog_path.open(encoding="utf-8") as handle:
             for line in handle:
                 product = json.loads(line)
+                registry_builder.observe(product)
                 batch.append((
                     str(product["parent_asin"]),
                     _text(product.get("title")),
@@ -79,6 +83,7 @@ class Agent:
         if batch:
             cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", batch)
         self.connection.commit()
+        self.catalog_registry = registry_builder.build()
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         tags = user_profile.get("preference_tags") or []

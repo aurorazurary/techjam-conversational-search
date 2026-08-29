@@ -20,6 +20,12 @@ from starter.intents import (
     BoundaryIntent,
     InfoIntent,
 )
+from starter.ranges import (
+    CatalogRegistry,
+    NumericalRange,
+    OrdinalRange,
+    determine_range,
+)
 
 # ── Text processing ──────────────────────────────────────────────────────────
 
@@ -61,6 +67,7 @@ DEFAULT_RERANK_WEIGHTS = {
     "profile_coverage": 0.5,
     "rating_quality": 0.08,
     "rating_popularity": 0.05,
+    "range_match": 0.0,
 }
 
 
@@ -108,6 +115,7 @@ class Ranker:
         self,
         connection: sqlite3.Connection,
         *,
+        catalog_registry: CatalogRegistry | None = None,
         rerank_weights: dict[str, float] | None = None,
         diversity_strength: float = 6.0,
         expand_query_terms: bool = False,
@@ -116,6 +124,7 @@ class Ranker:
         if unknown:
             raise ValueError(f"unknown reranker weights: {', '.join(sorted(unknown))}")
         self.connection = connection
+        self.catalog_registry = catalog_registry
         self.rerank_weights = {**DEFAULT_RERANK_WEIGHTS, **(rerank_weights or {})}
         self.diversity_strength = max(0.0, float(diversity_strength))
         self.expand_query_terms = bool(expand_query_terms)
@@ -164,6 +173,12 @@ class Ranker:
                 store.add_preference(c["attribute"], c["value"], c.get("hardness", HARDNESS_DISCLOSED))
 
         # NoInfoIntent or unknown — no state change
+
+        # Resolve ranges for any newly added preferences
+        if self.catalog_registry:
+            for pref in store.preferences:
+                if pref.range is None:
+                    pref.range = determine_range(pref.attribute, pref.value, self.catalog_registry)
 
     # ── Ranking pipeline ─────────────────────────────────────────────────
 
@@ -247,6 +262,11 @@ class Ranker:
             if terms:
                 add(self._fetch(_fts_and(terms[:12]), 180), 12.0)
                 add(self._fetch(_fts_or(terms[:20]), 250), 4.0)
+        # Route 4: range-expanded queries (ordinal ranges resolve to concrete values)
+        for pref in store.preferences:
+            if isinstance(pref.range, OrdinalRange) and pref.range.selected:
+                range_terms = list(pref.range.selected)[:20]
+                add(self._fetch(_fts_or(range_terms), 200), 3.0)
         return candidates
 
     # ── Product signal extraction (cached) ───────────────────────────────
@@ -326,6 +346,16 @@ class Ranker:
         prof_terms = set(t for tag in store.profile_tags for t in _terms(tag))
         if prof_terms:
             features["profile_coverage"] = len(prof_terms & signals.document_terms) / len(prof_terms)
+
+        # Range-based matching (supplements text matching for resolved ranges)
+        for pref in store.preferences:
+            if pref.range is None:
+                continue
+            h = pref.hardness
+            if isinstance(pref.range, NumericalRange):
+                features["range_match"] += h * pref.range.matches_price(signals.price)
+            elif isinstance(pref.range, OrdinalRange):
+                features["range_match"] += h * pref.range.matches(signals.normalized_corpus)
 
         features["rating_quality"] = max(0.0, signals.rating - 3.0)
         features["rating_popularity"] = min(12.0, math.log1p(max(0, signals.rating_count)))
