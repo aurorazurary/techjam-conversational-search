@@ -152,7 +152,11 @@ class Agent:
             profile_tags=[str(tag) for tag in tags if str(tag).strip()]
         )
 
-    def _update_state(self, state: SessionState, user_message: str) -> None:
+    def _update_state(self, state: SessionState, user_message: str) -> bool:
+        """Update state from the customer's message. Returns True if a genuinely
+        new constraint was learned this turn (used by respond() to decide whether
+        previously-excluded candidates deserve another look -- see the note on
+        seen_recommendations below)."""
         lowered = user_message.lower()
         category_match = LOOKING_FOR_RE.search(user_message)
         if category_match and not state.category:
@@ -161,18 +165,24 @@ class Agent:
         is_override = any(marker in lowered for marker in OVERRIDE_MARKERS)
         override_match = OVERRIDE_RE.search(user_message)
         if is_override or override_match:
-            # A previously recommended target is not scoreable until the override occurs,
-            # so allow all products to be considered again under the replacement intent.
-            state.seen_recommendations.clear()
             if state.initial_preference:
                 replaced = _normalized(state.initial_preference)
                 state.constraints = [
                     value for value in state.constraints if _normalized(value) != replaced
                 ]
                 state.initial_preference = ""
-            if override_match:
-                state.add_constraint(override_match.group(1))
-            return
+            # Fall back to the whole message if the specific "what I need is:"
+            # phrasing isn't present but a broader OVERRIDE_MARKERS phrase is --
+            # otherwise a detected-but-unparsed override silently learns nothing.
+            new_text = override_match.group(1) if override_match else user_message
+            state.add_constraint(new_text)
+            # Always signal "clear seen_recommendations" here, even if new_text
+            # turns out to be a duplicate of something already disclosed via an
+            # earlier broad question (common: the override's new_value is often
+            # already known by the time override_turn arrives). The override
+            # event itself -- not just novelty of its content -- is what makes a
+            # previously-excluded target scoreable again.
+            return True
 
         no_preference = NO_PREFERENCE_RE.search(user_message)
         if no_preference:
@@ -184,7 +194,7 @@ class Agent:
                     state.broad_exhausted = True
             else:
                 state.declined_attributes.add(attribute)
-            return
+            return False
 
         disclosure = DISCLOSURE_RE.search(user_message)
         if disclosure:
@@ -193,22 +203,22 @@ class Agent:
                 added = state.add_constraint(value) or added
             if added:
                 state.broad_answers += 1
-            return
+            return added
 
         key_requirement = KEY_REQUIREMENT_RE.search(user_message)
         if key_requirement:
-            state.add_constraint(key_requirement.group(1))
-            return
+            return state.add_constraint(key_requirement.group(1))
 
         if category_match:
             remainder = user_message[category_match.end():].strip(" .,\t\n")
             if remainder and "still exploring" not in remainder.lower():
                 state.initial_preference = _clean_value(remainder)
-                state.add_constraint(remainder)
-            return
+                return state.add_constraint(remainder)
+            return False
 
         if not any(phrase in lowered for phrase in GENERIC_FEEDBACK):
-            state.add_constraint(user_message)
+            return state.add_constraint(user_message)
+        return False
 
     def _fetch(self, expression: str, limit: int) -> list[tuple]:
         if not expression:
@@ -356,7 +366,15 @@ class Agent:
         if session_id not in self._sessions:
             raise RuntimeError("reset must be called before respond")
         state = self._sessions[session_id]
-        self._update_state(state, user_message)
+        learned_something_new = self._update_state(state, user_message)
+        if learned_something_new:
+            # A previously recommended target is not scoreable until an override
+            # occurs, so it needs to become recommendable again once new information
+            # arrives -- not just when override phrasing is detected. Gating this on
+            # "did state change" instead of exact phrase matching means it still works
+            # even if the customer's override wording doesn't match OVERRIDE_MARKERS/
+            # OVERRIDE_RE (e.g. a differently-worded private evaluator).
+            state.seen_recommendations.clear()
         recommendations = self._recommend(state, top_k)
         message, ask_attribute = self._next_question(state)
         return {
