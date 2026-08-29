@@ -234,6 +234,40 @@ reverted, record that result so another agent does not repeat it.
 - Next recommended action: use repeated stratified folds before attempting a learned
   global reranker; do not reopen rejected variants without a narrower hypothesis.
 
+### Iteration 6 — Decouple seen_recommendations from OverrideIntent
+
+- Date/agent: 2026-08-29 / Claude
+- Status: accepted
+- Hypothesis: `seen_recommendations` only cleared when a message was classified as
+  `OverrideIntent`. If the private evaluator phrases an override differently than
+  `OVERRIDE_RE`/`"actually, ignore"` expects, the correct target can be shown pre-override
+  (excluded per the scoring rule below), then stay permanently excluded for the rest of
+  the session even after the real preference is disclosed.
+- Why this matters: a pre-override recommendation never counts as a hit (only credited
+  once the override turn has been sent), but it still gets added to
+  `seen_recommendations`. If detection later fails, that correct product can never be
+  recommended again.
+- Changes and files: `starter/Ranker.py` — `apply_intent()` now clears
+  `seen_recommendations` whenever any branch actually adds new state (tracked via a
+  `changed` flag using `add_preference`'s existing return value), not only inside the
+  `OverrideIntent` branch. The override branch always sets `changed = True` even if its
+  value duplicates something already disclosed.
+- Tests/commands: `python -m unittest discover -s tests -v`; `python -m evaluator.local_evaluator`.
+- Before metrics: TechnicalScore 0.884461, HR@10 0.995.
+- After metrics: TechnicalScore 0.87811, HR@10 0.995. `intent_override` unchanged
+  (HR 1.0, MRR 0.881429, MTTC 3.867 — identical to before).
+- Per-scenario effects: small MRR dip in buying/browsing (broader clearing also fires on
+  ordinary disclosure turns); no scenario's HitRate changed.
+- Findings and risks: not verified under a fair wording-robustness test (an attempted
+  perturbed-evaluator check broke an unrelated shared regex and produced unusable
+  results). Intent classification itself is still regex-based and known-fragile; a
+  planned LLM-based intent classifier is expected to reduce how often this path is
+  needed, but the fallback structure here stays useful regardless of how intent gets
+  classified.
+- Next recommended action: re-run a properly scoped wording-robustness check (perturb
+  only override phrasing, leave other regex anchors like `MATTERS_RE` untouched) once
+  time allows.
+
 ## Template for the Next Iteration
 
 Copy this section to the bottom of the log and fill every field:
