@@ -116,10 +116,12 @@ Priorities are ordered by expected value and risk.
    improved MTTC, but reduced MRR enough to lower TechnicalScore from 0.884461 to
    0.862232 while taking 7.57x longer. Keep rule-first `hybrid` as the default and build
    a frozen paraphrase suite before expanding the model trigger.
-2. **Strengthen generalization evidence.** The disjoint-target audit scored 0.855423
-   versus 0.878343 publicly and exposed three Browsing misses, but it is one
-   participant-created seed with public-derived safe profiles. Keep it frozen and add
-   repeated scenario-stratified catalog seeds or grouped category folds before another
+2. **Strengthen generalization evidence.** Added a second seed,
+   `generalization_set_v2.jsonl` (0.874588, one Intent Override miss) -- much closer to
+   public than the first seed (0.855423, three Browsing misses), and the miss moved to a
+   different scenario. Consistent with ordinary seed variance rather than one systemic
+   weakness, but two seeds is still a small sample. Keep both frozen and add more
+   scenario-stratified catalog seeds or grouped category folds before another
    high-dimensional tuning effort.
 3. **Improve ambiguous Buying recall without sacrificing MRR.** One public Buying
    session remains a miss because its disclosed category and features are shared by a
@@ -471,6 +473,31 @@ reverted, record that result so another agent does not repeat it.
 - Next recommended action: keep this seed untouched as a regression audit, build a
   separate labeled paraphrase suite for intent/state accuracy, and use additional
   generated seeds—not this frozen file—for development experiments.
+
+### Iteration 12 — Second generalization seed (v2)
+
+- Date/agent: 2026-08-29 / Claude
+- Status: accepted as a frozen audit fixture; no agent tuning performed
+- Hypothesis: Iteration 11's -0.023 TechnicalScore gap on one disjoint-target seed
+  could be a systemic weakness or ordinary seed variance; a second independent seed
+  should distinguish the two.
+- Changes and files: ran the existing `experiments/generate_generalization_set.py`
+  with `--seed techjam-generalization-v2`, added frozen `data/generalization_set_v2.jsonl`
+  (same schema/mix/disjointness checks as v1), documented in `data/README.md`.
+- Tests/commands: `python -m evaluator.local_evaluator --dataset data/generalization_set_v2.jsonl`.
+- Before metrics (for reference): public 0.878343; v1 seed 0.855423.
+- After metrics: v2 seed Hit Rate 0.990, MRR 0.694627, MTTC 2.440, Efficiency 0.856,
+  TechnicalScore 0.874588.
+- Per-scenario effects: Buying 40, HR 1.0; Browsing 40, HR 1.0; Intent Override 15,
+  HR 0.933333 (1 miss); Boundary 5, HR 1.0.
+- Findings and risks: v2 lands much closer to public (-0.004) than v1 (-0.023), and its
+  one miss is a different scenario (Intent Override) than v1's three Browsing misses.
+  Consistent with ordinary seed-to-seed variance rather than a single systemic gap, but
+  two seeds is still a small sample -- do not treat this as confirmation, keep collecting
+  seeds before drawing a firm conclusion.
+- Next recommended action: same as Iteration 11 -- add more seeds/folds before tuning
+  against generalization performance, and keep the paraphrase-robustness gap (see
+  Iteration 6) as a separate, still-open concern this fixture does not address.
 
 ## Template for the Next Iteration
 
