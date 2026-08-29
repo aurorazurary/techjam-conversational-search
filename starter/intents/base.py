@@ -3,7 +3,31 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-MATERIALS = ("cotton", "polyester", "nylon", "leather", "wool", "spandex", "silk", "rayon", "fabric")
+# Word lists validated against catalog frequency (data/catalog.jsonl, 50K products)
+# rather than guessed from memory -- see the vocabulary iteration on clarification-dialog-state.
+MATERIALS = (
+    "polyester", "cotton", "fabric", "leather", "spandex", "mesh", "lace", "nylon", "knit",
+    "fleece", "suede", "rayon", "denim", "elastane", "jersey", "canvas", "acrylic", "wool",
+    "satin", "velvet", "chiffon", "faux leather", "microfiber", "viscose", "silk", "linen",
+    "flannel", "cashmere",
+)
+COLORS = (
+    "black", "white", "silver", "blue", "gold", "red", "grey", "gray", "green", "pink",
+    "yellow", "brown", "navy", "purple", "orange", "beige", "khaki", "tan", "turquoise",
+    "burgundy", "charcoal", "multicolor", "coral", "olive", "ivory", "teal", "mint",
+    "maroon", "lavender",
+)
+SIZE_WORDS = (
+    "size", "sizing", "small", "medium", "large", "xl", "xs", "xxl", "xxs", "wide", "narrow",
+    "short", "width", "one size", "plus size", "tall", "petite", "big and tall",
+)
+STYLE_WORDS = (
+    "style", "fit", "sleeve", "neck", "department", "casual", "formal", "athletic", "skinny",
+)
+USE_CASE_WORDS = (
+    "hiking", "running", "gym", "winter", "outdoor", "work", "use case", "everyday",
+    "party", "summer", "beach", "wedding", "travel", "office", "workout", "school", "sport",
+)
 
 CATEGORY_RE = re.compile(r"I'm looking for (.+?)(?:\.|,)", re.I)
 REQUIREMENT_RE = re.compile(r"A key requirement is:\s*(.+?)\.?\s*$", re.I)
@@ -26,20 +50,19 @@ def classify_attribute(value: str) -> str:
 
 
 def _classify_attribute_rule_based(value: str) -> str:
-    """Rule-based fallback. Mirrors evaluator/local_evaluator.py:classify_constraint."""
+    """Rule-based fallback."""
     lowered = value.lower()
     if "budget" in lowered or re.search(r"(?:\$|<=|under)\s*\d", lowered):
         return "budget"
     if any(m in lowered for m in MATERIALS):
         return "material"
-    if any(w in lowered for w in ("color", "black", "white", "blue", "red", "pink", "green",
-                                   "brown", "gray", "grey", "purple", "yellow", "orange")):
+    if "color" in lowered or any(w in lowered for w in COLORS):
         return "color"
-    if any(w in lowered for w in ("size", "sizing", "width", "wide", "narrow")):
+    if any(w in lowered for w in SIZE_WORDS):
         return "size"
-    if any(w in lowered for w in ("department", "style", "fit", "sleeve", "neck")):
+    if any(w in lowered for w in STYLE_WORDS):
         return "style"
-    if any(w in lowered for w in ("hiking", "running", "gym", "winter", "outdoor", "work")):
+    if any(w in lowered for w in USE_CASE_WORDS):
         return "use_case"
     return "feature"
 
