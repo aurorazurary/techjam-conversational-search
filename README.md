@@ -46,6 +46,24 @@ The command writes per-session results and aggregate metrics to `results.json`.
 The included weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
 MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
 
+## Included Offline Agent
+
+`starter/agent.py` now contains a stateful offline implementation with adaptive
+clarification, intent-override handling, multi-route FTS5 retrieval, structured
+reranking, and non-repeating recommendations. It uses only the Python standard
+library and does not require network access or an API key.
+
+Run its regression tests and public evaluation with:
+
+```bash
+python3 -m unittest -v
+python3 -m evaluator.local_evaluator
+```
+
+The current public-set development result is Hit Rate@10 `0.995`, MRR `0.626956`,
+MTTC `2.13`, and TechnicalScore `0.862987`. See
+`docs/solution_report.md` for architecture, cost, limitations, and scenario results.
+
 ## Agent Interface
 
 ```python
