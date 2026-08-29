@@ -52,6 +52,7 @@ NO_PREFERENCE_RE = re.compile(
     re.I,
 )
 DECLINE_RE = re.compile(r"ask me about one specific attribute", re.I)
+CATEGORY_RE = re.compile(r"\blooking\s+for\s+(.+?)(?:\.\s|,\s*but\b|$)", re.I)
 
 # "brand" is last: the reference simulator's classify_constraint never labels a
 # constraint "brand" (evaluator/local_evaluator.py:137-151), so asking it can
@@ -82,6 +83,7 @@ def _terms(text: str) -> list[str]:
 
 @dataclass
 class SessionState:
+    category_terms: list[str] = field(default_factory=list)
     terms: list[str] = field(default_factory=list)
     slots: dict[str, str] = field(default_factory=dict)
     asked: set[str] = field(default_factory=set)
@@ -184,13 +186,17 @@ class Agent:
             raise RuntimeError("reset must be called before respond")
         state = self._sessions[session_id]
 
+        if not state.category_terms:
+            category_match = CATEGORY_RE.search(user_message)
+            if category_match:
+                state.category_terms = _terms(category_match.group(1))
+
         if OVERRIDE_RE.search(user_message):
-            # Intent changed: old slots/terms describe the wrong product now.
-            state.slots.clear()
-            state.terms.clear()
-            state.asked.clear()
-            state.no_preference.clear()
-            state.broad_asks = 0
+            # Both old and new disclosed values describe the same real target product
+            # (see evaluator/local_evaluator.py:behavior_for -- old_value/new_value are
+            # both derived from the target's own intent card), so nothing here was ever
+            # wrong; clearing state on override only threw away useful signal. Just add
+            # the new value on top of everything already known.
             new_text = user_message.rsplit(":", 1)[-1] if ":" in user_message else user_message
             self._ingest(state, new_text)
         elif state.last_asked and NO_PREFERENCE_RE.search(user_message):
@@ -200,7 +206,7 @@ class Agent:
         elif not DECLINE_RE.search(user_message):
             self._ingest(state, user_message)
 
-        recommendations = self._search(state.terms, top_k)
+        recommendations = self._search(state.category_terms + state.terms, top_k)
 
         next_attribute = self._next_attribute(state)
         state.last_asked = next_attribute
