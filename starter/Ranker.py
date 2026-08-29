@@ -135,13 +135,19 @@ class Ranker:
 
     def apply_intent(self, store: PreferenceStore, intent: Intent) -> None:
         """Map a parsed Intent into PreferenceStore mutations."""
+        changed = False
+
         if isinstance(intent, OverrideIntent):
-            store.seen_recommendations.clear()
             if store.initial_preference:
                 store.remove_preference_by_value(store.initial_preference)
                 store.initial_preference = ""
             for c in intent.constraints:
                 store.add_preference(c["attribute"], c["value"], c.get("hardness", HARDNESS_OVERRIDE))
+            # Always treat an override as a reason to reconsider excluded candidates,
+            # even if its value turns out to duplicate something already disclosed
+            # (common -- the target may already be recommendable and just excluded
+            # from an earlier turn that couldn't count as a hit yet).
+            changed = True
 
         elif isinstance(intent, BoundaryIntent):
             attr = intent.no_preference_attr
@@ -157,12 +163,13 @@ class Ranker:
                 added = store.add_preference(c["attribute"], c["value"], c.get("hardness", HARDNESS_DISCLOSED)) or added
             if added:
                 store.broad_answers += 1
+            changed = added
 
         elif isinstance(intent, BuyingIntent):
             if intent.category_text and not store.category:
                 store.category = _clean_value(intent.category_text)
             for c in intent.constraints:
-                store.add_preference(c["attribute"], c["value"], c.get("hardness", HARDNESS_DISCLOSED))
+                changed = store.add_preference(c["attribute"], c["value"], c.get("hardness", HARDNESS_DISCLOSED)) or changed
 
         elif isinstance(intent, BrowsingIntent):
             if intent.category_text and not store.category:
@@ -170,9 +177,12 @@ class Ranker:
             if intent.constraints:
                 c = intent.constraints[0]
                 store.initial_preference = _clean_value(c["value"])
-                store.add_preference(c["attribute"], c["value"], c.get("hardness", HARDNESS_DISCLOSED))
+                changed = store.add_preference(c["attribute"], c["value"], c.get("hardness", HARDNESS_DISCLOSED)) or changed
 
-        # NoInfoIntent or unknown — no state change
+        # NoInfoIntent or unknown -- no state change
+
+        if changed:
+            store.seen_recommendations.clear()
 
         # Resolve ranges for any newly added preferences
         if self.catalog_registry:
