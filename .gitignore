@@ -18,4 +18,3 @@ tests/test_organizer_pipeline.py
 *.log
 *.catalog.jsonl
 starter/catalog.jsonl.gz
-CLAUDE.md
