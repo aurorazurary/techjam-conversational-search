@@ -1,64 +1,35 @@
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass, field
+from starter.Intent import (
+    Intent,
+    classify_attribute,
+    CATEGORY_RE,
+    REQUIREMENT_RE,
+    MATTERS_RE,
+    OVERRIDE_RE,
+    NO_PREF_RE,
+    NO_ADDITIONAL_RE,
+)
 
-MATERIALS = ("cotton", "polyester", "nylon", "leather", "wool", "spandex", "silk", "rayon", "fabric")
 
-CATEGORY_RE = re.compile(r"I'm looking for (.+?)(?:\.|,)", re.I)
-REQUIREMENT_RE = re.compile(r"A key requirement is:\s*(.+?)\.?\s*$", re.I)
-MATTERS_RE = re.compile(r"what matters is:\s*(.+?)\.?\s*$", re.I)
-OVERRIDE_RE = re.compile(r"What I need is:\s*(.+?)\.?\s*$", re.I)
-NO_PREF_RE = re.compile(r"I don't have a preference for (\w+)", re.I)
-NO_ADDITIONAL_RE = re.compile(r"I don't have an additional preference for (\w+)", re.I)
+class IntentGenerator:
+    """Generates Intent from user messages.
 
-
-def classify_attribute(value: str) -> str:
-    """Classify a constraint string into an attribute type.
-
-    Returns one of: budget, material, color, size, style, use_case, feature.
-
-    TODO: Replace with LLM-based classification for better accuracy on
-    ambiguous constraints. The LLM version should accept the same input/output
-    contract: (value: str) -> str returning one of the attribute types above.
+    Currently uses rule-based extraction.
+    TODO: Subclass or replace with LLM-based generation.
     """
-    return _classify_attribute_rule_based(value)
 
+    def generate(self, message: str, turn: int) -> Intent:
+        """Parse a user message into a structured Intent.
 
-def _classify_attribute_rule_based(value: str) -> str:
-    """Rule-based fallback. Mirrors evaluator/local_evaluator.py:classify_constraint."""
-    lowered = value.lower()
-    if "budget" in lowered or re.search(r"(?:\$|<=|under)\s*\d", lowered):
-        return "budget"
-    if any(m in lowered for m in MATERIALS):
-        return "material"
-    if any(w in lowered for w in ("color", "black", "white", "blue", "red", "pink", "green",
-                                   "brown", "gray", "grey", "purple", "yellow", "orange")):
-        return "color"
-    if any(w in lowered for w in ("size", "sizing", "width", "wide", "narrow")):
-        return "size"
-    if any(w in lowered for w in ("department", "style", "fit", "sleeve", "neck")):
-        return "style"
-    if any(w in lowered for w in ("hiking", "running", "gym", "winter", "outdoor", "work")):
-        return "use_case"
-    return "feature"
+        This is the method to override with LLM-based intent detection.
+        """
+        return self._generate_rule_based(message, turn)
 
+    def _generate_rule_based(self, message: str, turn: int) -> Intent:
+        """Rule-based intent extraction from evaluator message patterns."""
+        intent = Intent(raw_text=message)
 
-@dataclass
-class Intent:
-    """Structured representation of a single user message."""
-
-    scenario_signal: str = "unknown"
-    category_text: str = ""
-    constraints: list[dict] = field(default_factory=list)
-    override_signal: bool = False
-    no_preference_attr: str | None = None
-    raw_text: str = ""
-
-    @classmethod
-    def from_message(cls, message: str, turn: int) -> Intent:
-        intent = cls(raw_text=message)
-        ## To be replaced
         # --- Override detection (any turn) ---
         if "Actually, ignore" in message or "actually, ignore" in message:
             intent.override_signal = True
@@ -103,10 +74,7 @@ class Intent:
             elif "still exploring" in message.lower():
                 intent.scenario_signal = "browsing"
             else:
-                # Could be intent_override initial (has soft preference text)
-                # or unrecognised — extract any trailing constraint-like text
                 intent.scenario_signal = "browsing"
-                # Try to extract constraint from patterns like "I'm looking for X. <constraint>"
                 parts = message.split(".", 1)
                 if len(parts) > 1 and parts[1].strip():
                     tail = parts[1].strip().rstrip(".")
@@ -136,6 +104,6 @@ class Intent:
             intent.scenario_signal = "no_info"
             return intent
 
-        # --- Fallback: try to extract any useful text ---
+        # --- Fallback ---
         intent.scenario_signal = "no_info"
         return intent
