@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from starter.intents.base import Intent, CATEGORY_RE, REQUIREMENT_RE, classify_attribute
+from starter.Preference import HARDNESS_REQUIREMENT
 
 
 class BuyingIntent(Intent):
@@ -17,4 +18,5 @@ class BuyingIntent(Intent):
             self.constraints.append({
                 "attribute": classify_attribute(value),
                 "value": value,
+                "hardness": HARDNESS_REQUIREMENT,
             })

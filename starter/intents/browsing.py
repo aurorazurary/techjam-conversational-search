@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from starter.intents.base import Intent, CATEGORY_RE, classify_attribute
+from starter.Preference import HARDNESS_DISCLOSED
 
 
 class BrowsingIntent(Intent):
@@ -19,4 +20,5 @@ class BrowsingIntent(Intent):
                 self.constraints.append({
                     "attribute": classify_attribute(tail),
                     "value": tail,
+                    "hardness": HARDNESS_DISCLOSED,
                 })

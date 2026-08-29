@@ -1,110 +1,126 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
-from starter.Intent import Intent
+QUESTION_ORDER = (
+    "material", "color", "style", "size", "use_case", "budget", "feature", "brand",
+)
 
-# Map user_profile preference_tags to ALLOWED_ATTRIBUTES
-TAG_TO_ATTRIBUTE: dict[str, str] = {
-    "fit": "style",
-    "comfort": "feature",
-    "durability": "feature",
-    "material": "material",
-    "style": "style",
-    "weather": "use_case",
-    "warmth": "use_case",
-    "performance": "feature",
-    "brand": "brand",
-    "use_case": "use_case",
-    "color": "color",
-    "budget": "budget",
-    "size": "size",
+_CLEAN_RE = re.compile(r"\s+")
+_TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+_STOPWORDS = {
+    "a", "about", "all", "an", "and", "are", "as", "at", "be", "but",
+    "by", "can", "do", "does", "for", "from", "has", "have", "here", "i",
+    "in", "is", "it", "key", "looking", "made", "me", "my", "need", "not",
+    "of", "on", "or", "please", "some", "that", "the", "these", "this", "to",
+    "want", "what", "with", "would", "you", "your",
 }
 
-# Default fallback order when preference_tags are exhausted
-FALLBACK_ORDER = [
-    "feature", "use_case", "style", "material", "color",
-    "budget", "size", "brand", "category", "other",
-]
+
+def _clean_value(text: str) -> str:
+    return _CLEAN_RE.sub(" ", text).strip(" .;,\t\n")
+
+
+def _normalized(text: str) -> str:
+    return " ".join(
+        t.lower() for t in _TOKEN_RE.findall(text)
+        if len(t) > 1 and t.lower() not in _STOPWORDS
+    )
+
+
+# ── Hardness constants ───────────────────────────────────────────────────────
+
+HARDNESS_HARD = 1.0
+HARDNESS_REQUIREMENT = 0.9
+HARDNESS_OVERRIDE = 1.0
+HARDNESS_DISCLOSED = 0.6
+HARDNESS_PROFILE = 0.3
 
 
 @dataclass
 class Preference:
-    """Per-session state: accumulates constraints and drives questioning strategy."""
+    """A single user preference — one constraint with a degree of importance.
 
+    hardness controls how strongly this preference affects ranking:
+      1.0  = hard requirement (category, override)
+      0.9  = key requirement explicitly stated
+      0.6  = disclosed via conversation ("what matters is...")
+      0.3  = inferred from user profile tags
+
+    TODO: hardness may be determined by LLM based on user phrasing.
+    """
+
+    attribute: str
+    value: str
+    hardness: float = HARDNESS_DISCLOSED
+
+    @property
+    def is_hard(self) -> bool:
+        return self.hardness >= HARDNESS_REQUIREMENT
+
+
+@dataclass
+class PreferenceStore:
+    """Collection of Preferences plus session metadata — the agent's full memory.
+
+    Used by the Ranker as the resource for ranking decisions.
+    """
+
+    profile_tags: list[str]
     category: str = ""
-    constraints: dict[str, list[str]] = field(default_factory=dict)
-    no_preference: set[str] = field(default_factory=set)
+    initial_preference: str = ""
+    preferences: list[Preference] = field(default_factory=list)
     asked_attributes: list[str] = field(default_factory=list)
-    disclosed_values: set[str] = field(default_factory=set)
-    override_active: bool = False
-    user_profile_tags: list[str] = field(default_factory=list)
+    declined_attributes: set[str] = field(default_factory=set)
+    seen_recommendations: set[str] = field(default_factory=set)
+    broad_answers: int = 0
+    broad_exhausted: bool = False
 
-    def __init__(self, user_profile: dict) -> None:
-        self.category = ""
-        self.constraints = {}
-        self.no_preference = set()
-        self.asked_attributes = []
-        self.disclosed_values = set()
-        self.override_active = False
-        self.user_profile_tags = list(user_profile.get("preference_tags") or [])
+    def add_preference(self, attribute: str, value: str, hardness: float = HARDNESS_DISCLOSED) -> bool:
+        """Add a preference if not a duplicate. Returns True if added."""
+        cleaned = _clean_value(value)
+        if not cleaned:
+            return False
+        norm = _normalized(cleaned)
+        if not norm or any(_normalized(p.value) == norm for p in self.preferences):
+            return False
+        self.preferences.append(Preference(attribute=attribute, value=cleaned, hardness=hardness))
+        return True
 
-    def update(self, intent: Intent) -> None:
-        """Incorporate a parsed Intent into session state."""
-        # Handle override: clear old constraints, start fresh
-        if intent.override_signal:
-            self.constraints.clear()
-            self.disclosed_values.clear()
-            self.override_active = True
+    def remove_preference_by_value(self, value: str) -> None:
+        """Remove a preference whose normalized value matches."""
+        norm = _normalized(value)
+        self.preferences = [p for p in self.preferences if _normalized(p.value) != norm]
 
-        # Handle no-preference signal
-        if intent.no_preference_attr:
-            self.no_preference.add(intent.no_preference_attr)
+    @property
+    def constraint_values(self) -> list[str]:
+        """Raw value strings for all preferences (backward compat with Ranker)."""
+        return [p.value for p in self.preferences]
 
-        # Set category from first message
-        if intent.category_text and not self.category:
-            self.category = intent.category_text
+    def hard_preferences(self) -> list[Preference]:
+        """Preferences that are hard requirements."""
+        return [p for p in self.preferences if p.is_hard]
 
-        # Accumulate constraints
-        for constraint in intent.constraints:
-            attr = constraint["attribute"]
-            value = constraint["value"]
-            if value not in self.disclosed_values:
-                self.constraints.setdefault(attr, []).append(value)
-                self.disclosed_values.add(value)
+    def soft_preferences(self) -> list[Preference]:
+        """Preferences that are soft / nice-to-have."""
+        return [p for p in self.preferences if not p.is_hard]
 
-    def next_attribute_to_ask(self) -> str | None:
-        """Pick the best attribute to ask about next.
+    def next_question(self, broad_question_limit: int = 2) -> tuple[str, str]:
+        """Pick the next clarification question. Returns (message, ask_attribute)."""
+        if not self.broad_exhausted and self.broad_answers < broad_question_limit:
+            self.asked_attributes.append("other")
+            if self.broad_answers == 0:
+                return (
+                    "What matters most to you\u2014such as material, color, fit, budget, or intended use?",
+                    "other",
+                )
+            return ("Is there one more must-have detail I should prioritize?", "other")
 
-        Returns None only when all attributes are exhausted.
-        """
-        already = set(self.asked_attributes) | self.no_preference
-
-        # Phase 1: attributes derived from user_profile preference_tags
-        tag_attrs: list[str] = []
-        for tag in self.user_profile_tags:
-            attr = TAG_TO_ATTRIBUTE.get(tag, "feature")
-            if attr not in already and attr not in tag_attrs:
-                tag_attrs.append(attr)
-
-        for attr in tag_attrs:
-            self.asked_attributes.append(attr)
-            return attr
-
-        # Phase 2: fallback order
-        for attr in FALLBACK_ORDER:
-            if attr not in already:
+        for attr in QUESTION_ORDER:
+            if attr not in self.asked_attributes and attr not in self.declined_attributes:
                 self.asked_attributes.append(attr)
-                return attr
+                label = attr.replace("_", " ")
+                return (f"Do you have a preference for {label}?", attr)
 
-        return None
-
-    def to_search_terms(self) -> list[str]:
-        """Flatten category + all constraint values into search terms."""
-        terms: list[str] = []
-        if self.category:
-            terms.extend(self.category.split())
-        for values in self.constraints.values():
-            for value in values:
-                terms.extend(value.split())
-        return terms
+        return ("Is there another requirement that would help narrow these down?", "other")
