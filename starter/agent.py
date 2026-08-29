@@ -55,9 +55,11 @@ DECLINE_RE = re.compile(r"ask me about one specific attribute", re.I)
 
 # "brand" is last: the reference simulator's classify_constraint never labels a
 # constraint "brand" (evaluator/local_evaluator.py:137-151), so asking it can
-# never reveal anything there. "other" is a safe generic fallback that still
-# unconditionally reveals whatever's left, once the specific buckets are tried.
-ATTRIBUTE_ORDER = ["material", "color", "budget", "size", "style", "use_case", "feature", "other", "brand"]
+# never reveal anything there. "other" is asked broad-first (see BROAD_ASK_LIMIT)
+# rather than placed in this rotation, since it unconditionally reveals whatever's
+# undisclosed regardless of bucket.
+ATTRIBUTE_ORDER = ["material", "color", "budget", "size", "style", "use_case", "feature", "brand"]
+BROAD_ASK_LIMIT = 2
 
 
 def _text(value: object) -> str:
@@ -85,6 +87,7 @@ class SessionState:
     asked: set[str] = field(default_factory=set)
     no_preference: set[str] = field(default_factory=set)
     last_asked: str | None = None
+    broad_asks: int = 0
 
 
 class Agent:
@@ -162,6 +165,8 @@ class Agent:
         state.terms.extend(_terms(text))
 
     def _next_attribute(self, state: SessionState) -> str | None:
+        if state.broad_asks < BROAD_ASK_LIMIT:
+            return "other"
         for attribute in ATTRIBUTE_ORDER:
             if attribute in state.slots or attribute in state.no_preference or attribute in state.asked:
                 continue
@@ -185,6 +190,7 @@ class Agent:
             state.terms.clear()
             state.asked.clear()
             state.no_preference.clear()
+            state.broad_asks = 0
             new_text = user_message.rsplit(":", 1)[-1] if ":" in user_message else user_message
             self._ingest(state, new_text)
         elif state.last_asked and NO_PREFERENCE_RE.search(user_message):
@@ -198,7 +204,10 @@ class Agent:
 
         next_attribute = self._next_attribute(state)
         state.last_asked = next_attribute
-        if next_attribute:
+        if next_attribute == "other":
+            state.broad_asks += 1
+            message = "What matters most to you for this?"
+        elif next_attribute:
             state.asked.add(next_attribute)
             message = f"Do you have a {next_attribute.replace('_', ' ')} preference?"
         else:
