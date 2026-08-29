@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from starter.intents.base import Intent, OVERRIDE_RE, classify_attribute
+from starter.Preference import HARDNESS_OVERRIDE
 
 
 class OverrideIntent(Intent):
@@ -18,4 +19,5 @@ class OverrideIntent(Intent):
             self.constraints.append({
                 "attribute": classify_attribute(value),
                 "value": value,
+                "hardness": HARDNESS_OVERRIDE,
             })
