@@ -8,9 +8,10 @@
 
 - Last updated: 2026-08-29
 - Branch: `main`
-- Phase: 40-session DeepSeek Q&A audit complete; rule-first `hybrid` retained
-- Handoff state: DeepSeek integration, recorded-audit support, and merged-architecture
-  compatibility fixes are verified for the main branch
+- Phase: 100-session disjoint-target generalization audit added and measured;
+  rule-first `hybrid` retained
+- Handoff state: the DeepSeek integration and organizer-compatible generalization
+  fixture are verified locally on the main branch and currently uncommitted
 - Agent entry point: `starter/agent.py`
 - Test command: `python3 -m unittest -v`
 - Evaluation command: `python3 -m evaluator.local_evaluator`
@@ -50,6 +51,29 @@ An earlier timed offline configuration took 81.83 seconds, including catalog loa
 and index construction. The recorded 40-session live DeepSeek audit took 120.06
 seconds and averaged 1.1644 seconds per API request.
 
+## Frozen Generalization Audit
+
+The participant-created `data/generalization_set.jsonl` contains 100 unique targets
+from the frozen catalog with zero overlap with the 200 public targets. It deliberately
+uses the organizer's participant-visible schema, scenario-to-difficulty mapping, exact
+40 Buying / 40 Browsing / 15 Intent Override / 5 Boundary mix, and unchanged evaluator.
+Hidden intent cards and simulator behavior are derived at runtime from catalog metadata
+just as they are for the public set.
+
+| Metric | Public 200 | Disjoint-target 100 | Change |
+| --- | ---: | ---: | ---: |
+| Hit Rate@10 | 0.995 | 0.970 | -0.025 |
+| MRR | 0.687145 | 0.681409 | -0.005736 |
+| MTTC | 2.265 | 2.700 | +0.435 |
+| Efficiency | 0.8735 | 0.8300 | -0.0435 |
+| TechnicalScore | 0.878343 | 0.855423 | -0.022920 |
+
+The audit took 33.65 seconds, used zero model tokens, and missed three Browsing
+sessions. It is not organizer data or an independent estimate of private performance:
+profiles are safe public-profile samples and the simulator still uses canonical public
+wording. Freeze this file for regression auditing; do not tune target-specific logic
+against it.
+
 ## Implemented Architecture
 
 - Per-session memory for category, constraints, profile tags, asked/declined
@@ -75,9 +99,9 @@ seconds and averaged 1.1644 seconds per API request.
   Top-10 results and higher reciprocal rank.
 - In-process caches for repeated FTS queries and normalized product signals.
 - Deterministic non-repetition of failed recommendations across turns.
-- Twenty regression tests covering evaluator behavior, state, caching, query
+- Twenty-two regression tests covering evaluator behavior, state, caching, query
   expansion, splitting, DeepSeek requests, hybrid intent parsing, selective override,
-  range determinism, and the agent.
+  range determinism, organizer-compatible generalization data, and the agent.
 - Reproduction, architecture, cost, interaction, and limitation documentation in
   `docs/solution_report.md`.
 
@@ -85,14 +109,17 @@ seconds and averaged 1.1644 seconds per API request.
 
 Priorities are ordered by expected value and risk.
 
-1. **Validate LLM value on paraphrases, not canonical templates.** A live 200-session
+1. **Validate LLM value on paraphrases, not canonical templates.** The new 100-session
+   audit changes target products but intentionally preserves the canonical simulator
+   language, so it does not establish LLM value. A live 200-session
    `always` run was rejected: it recovered the single offline miss and slightly
    improved MTTC, but reduced MRR enough to lower TechnicalScore from 0.884461 to
    0.862232 while taking 7.57x longer. Keep rule-first `hybrid` as the default and build
    a frozen paraphrase suite before expanding the model trigger.
-2. **Strengthen generalization evidence.** The deterministic 150/50 split is now in
-   place, but the holdout contains only two Boundary sessions. Add repeated
-   scenario-stratified cross-validation or multiple fixed seeds before another
+2. **Strengthen generalization evidence.** The disjoint-target audit scored 0.855423
+   versus 0.878343 publicly and exposed three Browsing misses, but it is one
+   participant-created seed with public-derived safe profiles. Keep it frozen and add
+   repeated scenario-stratified catalog seeds or grouped category folds before another
    high-dimensional tuning effort.
 3. **Improve ambiguous Buying recall without sacrificing MRR.** One public Buying
    session remains a miss because its disclosed category and features are shared by a
@@ -411,6 +438,39 @@ reverted, record that result so another agent does not repeat it.
 - Next recommended action: evaluate the generalized reset policy with multiple frozen
   override-paraphrase folds before deciding whether its robustness gain justifies the
   MRR tradeoff.
+
+### Iteration 11 — Organizer-compatible 100-session generalization audit
+
+- Date/agent: 2026-08-29 / Codex
+- Status: accepted as a frozen audit fixture; no agent tuning performed
+- Hypothesis: 100 catalog-valid targets disjoint from the public 200, evaluated through
+  the unchanged organizer simulator, will expose target-level overfitting while
+  preserving comparable session behavior and metrics.
+- Changes and files: added deterministic
+  `experiments/generate_generalization_set.py`, frozen
+  `data/generalization_set.jsonl`, contract tests in
+  `tests/test_generalization_set.py`, and reproduction/disclosure documentation in
+  `README.md` and `data/README.md`.
+- Tests/commands: generator validation; focused 2/2 tests; unchanged local evaluator
+  with `PYTHONHASHSEED=2`; JSONL schema/mix/uniqueness/disjointness checks; full suite
+  and diff checks.
+- Before metrics: current public Hit Rate 0.995, MRR 0.687145, MTTC 2.265,
+  Efficiency 0.8735, TechnicalScore 0.878343.
+- After metrics: disjoint-target Hit Rate 0.970, MRR 0.681409, MTTC 2.700,
+  Efficiency 0.8300, TechnicalScore 0.855423.
+- Per-scenario effects: Buying 40 samples, Hit Rate 1.0, MRR 0.727222, MTTC 1.75;
+  Browsing 40, 0.925, 0.634087, 3.025; Intent Override 15, 1.0, 0.694048,
+  4.133333; Boundary 5, 1.0, 0.655556, 3.4.
+- Runtime/cost effects: 33.65 seconds for 100 sessions; zero prompt/completion tokens
+  and $0 model cost in the default offline/hybrid path.
+- Findings and risks: all 100 targets are catalog-valid, unique, and absent from the
+  public target set; all three misses were Browsing. The fixture exactly matches the
+  public schema and scenario policy but is not organizer or private data. It reuses
+  safe aggregate profile examples and canonical simulator phrasing, so it measures
+  target/retrieval generalization rather than natural-language paraphrase robustness.
+- Next recommended action: keep this seed untouched as a regression audit, build a
+  separate labeled paraphrase suite for intent/state accuracy, and use additional
+  generated seeds—not this frozen file—for development experiments.
 
 ## Template for the Next Iteration
 

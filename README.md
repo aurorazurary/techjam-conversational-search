@@ -62,6 +62,18 @@ python3 -m unittest -v
 python3 -m evaluator.local_evaluator
 ```
 
+Run the frozen 100-session, disjoint-target audit with the same evaluator contract:
+
+```bash
+python3 -m evaluator.local_evaluator \
+  --dataset data/generalization_set.jsonl \
+  --output /tmp/techjam_generalization_results.json
+```
+
+This participant-created set uses the organizer's exact 40/40/15/5 scenario mix and
+contains no public target IDs. It is a robustness audit, not organizer data or a proxy
+for the private leaderboard.
+
 The current public-set development result is Hit Rate@10 `0.995`, MRR `0.687145`,
 MTTC `2.265`, and TechnicalScore `0.878343`. See
 `docs/solution_report.md` for architecture, cost, limitations, and scenario results.
@@ -154,6 +166,7 @@ TechnicalScore, so the default remains rule-first hybrid.
 
 ```text
 data/public_set.jsonl             200 labeled development sessions
+data/generalization_set.jsonl     100 disjoint participant-created audit sessions
 docs/competition_specification.md participant rules and evaluation protocol
 docs/agent_api_contract.json      machine-readable Agent contract
 docs/evaluation_config.json       scoring configuration
