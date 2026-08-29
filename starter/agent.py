@@ -28,9 +28,16 @@ COLOR_RE = re.compile(
     re.I,
 )
 BUDGET_RE = re.compile(r"\$\s?\d+|\bunder\s+\$?\d+|\bbudget\b", re.I)
-SIZE_RE = re.compile(r"\b(size|sizing|small|medium|large|x+l|x+s|wide|narrow)\b", re.I)
-STYLE_WORDS = ("style", "fit", "sleeve", "neck", "department", "casual", "formal")
-USE_CASE_WORDS = ("hiking", "running", "gym", "winter", "outdoor", "work", "use case", "everyday")
+SIZE_RE = re.compile(
+    r"\b(size|sizing|small|medium|large|x+l|x+s|wide|narrow|short|width|one size|plus size|tall|petite"
+    r"|big and tall)\b",
+    re.I,
+)
+STYLE_WORDS = ("style", "fit", "sleeve", "neck", "department", "casual", "formal", "athletic", "skinny")
+USE_CASE_WORDS = (
+    "hiking", "running", "gym", "winter", "outdoor", "work", "use case", "everyday",
+    "party", "summer", "beach", "wedding", "travel", "office", "workout", "school", "sport",
+)
 BRAND_WORDS = ("brand",)
 
 # Signals emitted by the evaluator's simulated customer (see customer_reply /
@@ -46,7 +53,11 @@ NO_PREFERENCE_RE = re.compile(
 )
 DECLINE_RE = re.compile(r"ask me about one specific attribute", re.I)
 
-ATTRIBUTE_ORDER = ["material", "color", "budget", "size", "style", "use_case", "brand", "feature"]
+# "brand" is last: the reference simulator's classify_constraint never labels a
+# constraint "brand" (evaluator/local_evaluator.py:137-151), so asking it can
+# never reveal anything there. "other" is a safe generic fallback that still
+# unconditionally reveals whatever's left, once the specific buckets are tried.
+ATTRIBUTE_ORDER = ["material", "color", "budget", "size", "style", "use_case", "feature", "other", "brand"]
 
 
 def _text(value: object) -> str:
