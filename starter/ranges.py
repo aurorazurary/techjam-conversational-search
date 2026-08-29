@@ -366,9 +366,11 @@ def _resolve_from_groups(
             if selected:
                 return OrdinalRange(selected=frozenset(selected), universe=universe)
 
-    # Single value match: "blue", "cotton"
-    for val in universe:
-        if val in lowered:
-            return OrdinalRange(selected=frozenset({val}), universe=universe)
+    # Explicit values: prefer the first value stated by the customer. Iterating the
+    # catalog frozenset directly made this choice vary with PYTHONHASHSEED.
+    mentioned = [val for val in universe if val in lowered]
+    if mentioned:
+        selected = min(mentioned, key=lambda val: (lowered.find(val), -len(val), val))
+        return OrdinalRange(selected=frozenset({selected}), universe=universe)
 
     return None

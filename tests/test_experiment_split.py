@@ -38,6 +38,26 @@ class ExperimentSplitTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             stratified_split([], holdout_fraction=1.0)
 
+    def test_twenty_percent_split_has_challenge_mix(self) -> None:
+        samples = [
+            {"sample_id": f"{scenario}_{index:03d}", "scenario_type": scenario}
+            for scenario, count in (
+                ("buying", 80),
+                ("browsing", 80),
+                ("intent_override", 30),
+                ("boundary", 10),
+            )
+            for index in range(count)
+        ]
+
+        _, holdout = stratified_split(samples, holdout_fraction=0.2)
+
+        self.assertEqual(len(holdout), 40)
+        self.assertEqual(
+            Counter(sample["scenario_type"] for sample in holdout),
+            Counter({"buying": 16, "browsing": 16, "intent_override": 6, "boundary": 2}),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

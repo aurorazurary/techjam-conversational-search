@@ -53,6 +53,12 @@ def main() -> None:
     parser.add_argument(
         "--split", choices=("development", "holdout", "both", "all"), default="both"
     )
+    parser.add_argument(
+        "--holdout-fraction",
+        type=float,
+        default=0.25,
+        help="Scenario-stratified holdout fraction (0 < value < 1)",
+    )
     parser.add_argument("--output", help="Optional JSON path for detailed split results")
     parser.add_argument(
         "--weights",
@@ -64,7 +70,9 @@ def main() -> None:
     args = parser.parse_args()
 
     samples = load_jsonl(args.dataset)
-    development, holdout = stratified_split(samples)
+    development, holdout = stratified_split(
+        samples, holdout_fraction=args.holdout_fraction
+    )
     partitions = {
         "development": development,
         "holdout": holdout,
@@ -97,6 +105,7 @@ def main() -> None:
     }
     payload = {
         "split_salt": SPLIT_SALT,
+        "holdout_fraction": args.holdout_fraction,
         "partition_sizes": {
             "development": len(development),
             "holdout": len(holdout),

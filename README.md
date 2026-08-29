@@ -46,13 +46,14 @@ The command writes per-session results and aggregate metrics to `results.json`.
 The included weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
 MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
 
-## Included Offline Agent
+## Included Hybrid Agent
 
-`starter/agent.py` now contains a stateful offline implementation with adaptive
+`starter/agent.py` contains a stateful implementation with adaptive
 clarification, intent-override handling, multi-route FTS5 retrieval, structured
 reranking, holdout-validated title diversity, cached product signals, and
-non-repeating recommendations. It uses only the Python standard library and does not
-require network access or an API key.
+non-repeating recommendations. Its deterministic path uses only the Python standard
+library and does not require network access or an API key. An optional rule-first
+DeepSeek parser handles messages that do not match the known conversation templates.
 
 Run its regression tests and public evaluation with:
 
@@ -61,9 +62,45 @@ python3 -m unittest -v
 python3 -m evaluator.local_evaluator
 ```
 
-The current public-set development result is Hit Rate@10 `0.995`, MRR `0.693675`,
-MTTC `2.26`, and TechnicalScore `0.880402`. See
+The current public-set development result is Hit Rate@10 `0.995`, MRR `0.687145`,
+MTTC `2.265`, and TechnicalScore `0.878343`. See
 `docs/solution_report.md` for architecture, cost, limitations, and scenario results.
+
+### Optional DeepSeek intent parser
+
+The API key is read only from the process environment. Never add it to source control.
+
+```bash
+export DEEPSEEK_API_KEY="your-key-from-your-secret-manager"
+export DEEPSEEK_MODE=hybrid
+python3 -m experiments.smoke_deepseek_intent
+```
+
+`hybrid` keeps the deterministic parser for recognized evaluator templates and calls
+DeepSeek only for ambiguous messages. `always` calls DeepSeek on every turn for
+experiments, while `off` guarantees network-free execution. Optional settings are
+`DEEPSEEK_MODEL` (default `deepseek-v4-flash`), `DEEPSEEK_TIMEOUT_SECONDS` (default
+`4.0`), `DEEPSEEK_MIN_CONFIDENCE` (default `0.55`), `DEEPSEEK_BASE_URL`, and
+`DEEPSEEK_LOG_PATH`. The last setting writes one secret-free JSONL record per API call
+for intent-parser auditing. Keep exports under `artifacts/llm_exports/`, which Git
+ignores by default:
+
+```bash
+export DEEPSEEK_LOG_PATH="artifacts/llm_exports/deepseek_qna.jsonl"
+```
+
+DeepSeek failures, timeouts, empty output, invalid JSON, invalid attributes, and
+low-confidence parses automatically fall back to the deterministic intent parser.
+On the 200-session public set, forced `always` mode scored `0.862232` versus
+`0.884461` for rule-first hybrid, used 236,537 tokens, and took 619.27 seconds.
+Therefore `always` is an experimental rejected mode, not the recommended submission
+configuration.
+
+A recorded 40-session, scenario-stratified `always` audit produced 85 API-call
+records, used 47,709 total API tokens, and cost an estimated `$0.0035`. Its
+TechnicalScore was `0.899717`, below the matched deterministic control's `0.912208`.
+The local JSONL export includes request payloads, raw and parsed responses, token-cache
+counts, and latency, but never the API key or authorization header.
 
 ## Agent Interface
 
@@ -105,6 +142,13 @@ Only exact `parent_asin` equality produces a hit. Core metrics are also reported
 ## Model Choice and Cost
 
 Teams may use any legally accessible LLM API or local model. Teams manage their own credentials and must never commit API keys. Model choice, estimated cost, token usage, and latency must be disclosed. Token usage is a feasibility metric, not part of the core technical score. The organizer does not provide or reimburse model API credits; teams are responsible for any costs incurred through optional external services.
+
+This implementation defaults to DeepSeek `deepseek-v4-flash` when the optional parser
+is enabled. The public benchmark follows recognized templates, so the default hybrid
+run makes no API calls and reports zero model tokens. Live-model cost and latency must
+be measured and disclosed before relying on it for a submission. A forced live run is
+documented in `progress.md`; it improved Hit Rate to 1.0 but reduced MRR and the overall
+TechnicalScore, so the default remains rule-first hybrid.
 
 ## Files
 

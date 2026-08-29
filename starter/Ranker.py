@@ -12,14 +12,7 @@ from starter.Preference import (
     _clean_value,
     _normalized,
 )
-from starter.intents import (
-    Intent,
-    BuyingIntent,
-    BrowsingIntent,
-    OverrideIntent,
-    BoundaryIntent,
-    InfoIntent,
-)
+from starter.intents import Intent
 from starter.ranges import (
     CatalogRegistry,
     NumericalRange,
@@ -136,11 +129,30 @@ class Ranker:
     def apply_intent(self, store: PreferenceStore, intent: Intent) -> None:
         """Map a parsed Intent into PreferenceStore mutations."""
         changed = False
+        signal = intent.scenario_signal
+        if intent.shopping_mode in {"buying", "browsing"}:
+            store.shopping_mode = intent.shopping_mode
 
-        if isinstance(intent, OverrideIntent):
-            if store.initial_preference:
+        if signal == "override":
+            if intent.replace_attribute:
+                initial_attribute = next(
+                    (
+                        preference.attribute
+                        for preference in store.preferences
+                        if store.initial_preference
+                        and _normalized(preference.value)
+                        == _normalized(store.initial_preference)
+                    ),
+                    None,
+                )
+                store.remove_preferences_by_attribute(intent.replace_attribute)
+                if initial_attribute == intent.replace_attribute:
+                    store.initial_preference = ""
+            elif store.initial_preference:
                 store.remove_preference_by_value(store.initial_preference)
                 store.initial_preference = ""
+            if intent.category_text:
+                store.category = _clean_value(intent.category_text)
             for c in intent.constraints:
                 store.add_preference(c["attribute"], c["value"], c.get("hardness", HARDNESS_OVERRIDE))
             # Always treat an override as a reason to reconsider excluded candidates,
@@ -149,7 +161,7 @@ class Ranker:
             # from an earlier turn that couldn't count as a hit yet).
             changed = True
 
-        elif isinstance(intent, BoundaryIntent):
+        elif signal == "boundary":
             attr = intent.no_preference_attr
             if attr == "other":
                 if store.broad_answers:
@@ -157,7 +169,7 @@ class Ranker:
             elif attr:
                 store.declined_attributes.add(attr)
 
-        elif isinstance(intent, InfoIntent):
+        elif signal == "info":
             added = False
             for c in intent.constraints:
                 added = store.add_preference(c["attribute"], c["value"], c.get("hardness", HARDNESS_DISCLOSED)) or added
@@ -165,13 +177,13 @@ class Ranker:
                 store.broad_answers += 1
             changed = added
 
-        elif isinstance(intent, BuyingIntent):
+        elif signal == "buying":
             if intent.category_text and not store.category:
                 store.category = _clean_value(intent.category_text)
             for c in intent.constraints:
                 changed = store.add_preference(c["attribute"], c["value"], c.get("hardness", HARDNESS_DISCLOSED)) or changed
 
-        elif isinstance(intent, BrowsingIntent):
+        elif signal == "browsing":
             if intent.category_text and not store.category:
                 store.category = _clean_value(intent.category_text)
             if intent.constraints:
@@ -275,7 +287,7 @@ class Ranker:
         # Route 4: range-expanded queries (ordinal ranges resolve to concrete values)
         for pref in store.preferences:
             if isinstance(pref.range, OrdinalRange) and pref.range.selected:
-                range_terms = list(pref.range.selected)[:20]
+                range_terms = sorted(pref.range.selected)[:20]
                 add(self._fetch(_fts_or(range_terms), 200), 3.0)
         return candidates
 

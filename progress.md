@@ -7,17 +7,20 @@
 ## Current Status
 
 - Last updated: 2026-08-29
-- Branch: `feature/stateful-conversational-agent`
-- Phase: holdout-validated diversity and latency experiments complete
-- Handoff state: accepted experiment changes are verified and committed on the feature
-  branch
+- Branch: `main`
+- Phase: 40-session DeepSeek Q&A audit complete; rule-first `hybrid` retained
+- Handoff state: DeepSeek integration, recorded-audit support, and merged-architecture
+  compatibility fixes are verified for the main branch
 - Agent entry point: `starter/agent.py`
 - Test command: `python3 -m unittest -v`
 - Evaluation command: `python3 -m evaluator.local_evaluator`
 - Detailed local output: `results.json` (intentionally gitignored)
 - Dependencies: Python standard library only; SQLite must include FTS5
-- Network/API requirement: none
-- Reported model tokens and estimated inference cost: 0 / $0
+- Network/API requirement: optional DeepSeek HTTPS API for ambiguous-message parsing;
+  deterministic fallback requires no network or credentials
+- Reported model tokens and estimated inference cost: hybrid public run 0 / $0;
+  recorded 40-session `always` audit 47,709 API tokens / about $0.0035; rejected
+  200-session `always` run 236,537 evaluator-reported tokens / at most about $0.040
 - Catalog policy: `data/catalog.jsonl` and `starter/catalog.jsonl.gz` are local-only,
   ignored artifacts; obtain the catalog from the published release/checksum workflow
 
@@ -28,28 +31,34 @@ Final verified run on the released 200-session set:
 | Metric | Weak baseline | Current agent | Change |
 | --- | ---: | ---: | ---: |
 | Hit Rate@10 | 0.125 | 0.995 | +0.870 |
-| MRR | 0.068034 | 0.693675 | +0.625641 |
-| MTTC | 9.81 | 2.26 | -7.55 |
-| Efficiency | 0.119 | 0.874 | +0.755 |
-| TechnicalScore | 0.106710 | 0.880402 | +0.773692 |
+| MRR | 0.068034 | 0.687145 | +0.619111 |
+| MTTC | 9.81 | 2.265 | -7.545 |
+| Efficiency | 0.119 | 0.8735 | +0.7545 |
+| TechnicalScore | 0.106710 | 0.878343 | +0.771633 |
 
 Scenario results:
 
 | Scenario | Samples | Hit Rate@10 | MRR | MTTC |
 | --- | ---: | ---: | ---: | ---: |
-| Buying | 80 | 0.9875 | 0.653968 | 1.8125 |
-| Browsing | 80 | 1.0 | 0.681939 | 2.1375 |
-| Intent Override | 30 | 1.0 | 0.849299 | 3.9 |
+| Buying | 80 | 0.9875 | 0.637108 | 1.825 |
+| Browsing | 80 | 1.0 | 0.670427 | 2.15 |
+| Intent Override | 30 | 1.0 | 0.881429 | 3.866667 |
 | Boundary | 10 | 1.0 | 0.638333 | 1.9 |
 
-The final timed evaluation took 42.23 seconds for 200 sessions and 451 calls to
-`respond` (approximately 0.21 seconds per session and 0.094 seconds per response,
-including catalog loading and index construction).
+The current merged-main result was verified on all 200 sessions with zero model calls.
+An earlier timed offline configuration took 81.83 seconds, including catalog loading
+and index construction. The recorded 40-session live DeepSeek audit took 120.06
+seconds and averaged 1.1644 seconds per API request.
 
 ## Implemented Architecture
 
 - Per-session memory for category, constraints, profile tags, asked/declined
   attributes, initial preference, and previously recommended products.
+- Modular `Intent -> PreferenceStore -> Ranker` architecture with hardness-weighted
+  preferences and catalog-derived numerical/ordinal ranges.
+- Optional rule-first DeepSeek `deepseek-v4-flash` intent parsing for ambiguous or
+  paraphrased messages, strict JSON validation, selective attribute replacement,
+  model-usage reporting, and automatic offline fallback.
 - Adaptive structured clarification using `ask_attribute`, beginning with a broad
   must-have question and falling back to specific attributes.
 - Boundary handling that avoids repeatedly asking declined specific attributes while
@@ -66,8 +75,9 @@ including catalog loading and index construction).
   Top-10 results and higher reciprocal rank.
 - In-process caches for repeated FTS queries and normalized product signals.
 - Deterministic non-repetition of failed recommendations across turns.
-- Thirteen regression tests covering evaluator behavior, state, caching, query
-  expansion, splitting, and the new agent.
+- Twenty regression tests covering evaluator behavior, state, caching, query
+  expansion, splitting, DeepSeek requests, hybrid intent parsing, selective override,
+  range determinism, and the agent.
 - Reproduction, architecture, cost, interaction, and limitation documentation in
   `docs/solution_report.md`.
 
@@ -75,28 +85,33 @@ including catalog loading and index construction).
 
 Priorities are ordered by expected value and risk.
 
-1. **Strengthen generalization evidence.** The deterministic 150/50 split is now in
+1. **Validate LLM value on paraphrases, not canonical templates.** A live 200-session
+   `always` run was rejected: it recovered the single offline miss and slightly
+   improved MTTC, but reduced MRR enough to lower TechnicalScore from 0.884461 to
+   0.862232 while taking 7.57x longer. Keep rule-first `hybrid` as the default and build
+   a frozen paraphrase suite before expanding the model trigger.
+2. **Strengthen generalization evidence.** The deterministic 150/50 split is now in
    place, but the holdout contains only two Boundary sessions. Add repeated
    scenario-stratified cross-validation or multiple fixed seeds before another
    high-dimensional tuning effort.
-2. **Improve ambiguous Buying recall without sacrificing MRR.** One public Buying
+3. **Improve ambiguous Buying recall without sacrificing MRR.** One public Buying
    session remains a miss because its disclosed category and features are shared by a
    large group of near-identical novelty products. Title diversity improved MRR but
    did not recover this fundamentally under-specified target. Do not hard-code it.
-3. **Test a genuinely learned reranker.** The scorer now exposes explicit features,
+4. **Test a genuinely learned reranker.** The scorer now exposes explicit features,
    but the first hand-calibrated weight variant was rejected. Use cross-validated
    pairwise/listwise learning and export only global weights if it beats the accepted
    default across folds.
-4. **Test retrieval robustness.** Add tests for prices, empty/unknown queries,
+5. **Test retrieval robustness.** Add tests for prices, empty/unknown queries,
    duplicate constraints, malformed-but-valid input, sparse catalog rows, and all
    allowed clarification attributes.
-5. **Consider offline semantic retrieval only if justified.** Basic synonym expansion
+6. **Consider offline semantic retrieval only if justified.** Basic synonym expansion
    was tested and rejected for a small score regression. Dense embeddings may still
    help novel paraphrases, but they add dependencies, assets, startup time, and
    submission risk. Keep the standard-library lexical fallback fully functional.
-6. **Finish submission metadata.** Add team-member contribution details, confirm the
+7. **Finish submission metadata.** Add team-member contribution details, confirm the
    organizer's runtime limits, and package the final entry point and instructions.
-7. **Validate the recommended runtime.** The current code works with local Python
+8. **Validate the recommended runtime.** The current code works with local Python
    3.9.6, but the challenge recommends Python 3.10+. Run the final bundle in a clean
    Python 3.10+ environment.
 
@@ -267,6 +282,135 @@ reverted, record that result so another agent does not repeat it.
 - Next recommended action: re-run a properly scoped wording-robustness check (perturb
   only override phrasing, leave other regex anchors like `MATTERS_RE` untouched) once
   time allows.
+
+### Iteration 7 — Hybrid DeepSeek intent parsing
+
+- Date/agent: 2026-08-29 / Codex
+- Status: implemented; offline path accepted, live-model validation pending
+- Hypothesis: rule-first DeepSeek parsing will improve robustness to private-set
+  paraphrases and selective overrides without reducing canonical offline metrics when
+  the API is unavailable.
+- Changes and files: added a standard-library DeepSeek JSON client, injectable hybrid
+  intent generator, compact session context, strict enum/confidence validation,
+  structured attribute replacement, token propagation, runtime smoke command,
+  merged-architecture compatibility proxies, and deterministic range selection.
+- Tests/commands: `python3 -m unittest -v` (19/19 passed); mocked request, fallback,
+  context, usage, override, and range tests; full evaluator with
+  `PYTHONHASHSEED=2`; `git diff --check`.
+- Before metrics: freshly measured merged local baseline Hit Rate 0.995, MRR 0.705536,
+  MTTC 2.235, TechnicalScore 0.884461.
+- After metrics: offline hybrid fallback Hit Rate 0.995, MRR 0.705536, MTTC 2.235,
+  TechnicalScore 0.884461; zero prompt/completion tokens.
+- Per-scenario effects: unchanged at Buying 0.666086 MRR, Browsing 0.687426, Intent
+  Override 0.881429, and Boundary 0.638333; scenario Hit Rates unchanged.
+- Runtime/cost effects: final offline run 81.83 seconds and $0. Live DeepSeek latency,
+  token use, and cost were not measured because the secret was intentionally not
+  persisted or placed in a command.
+- Findings and risks: public templates are handled by high-confidence rules, so hybrid
+  mode makes zero API calls on the public evaluator. The LLM path targets paraphrase
+  robustness, not the canonical public score. Official scoring may disable network,
+  and model behavior is not accepted until a separate paraphrase/live evaluation.
+- Next recommended action: export `DEEPSEEK_API_KEY` from a secret manager, run
+  `python3 -m experiments.smoke_deepseek_intent`, then evaluate a frozen paraphrase
+  suite in `hybrid` and `always` modes without changing the public evaluator.
+
+### Iteration 8 — Live DeepSeek forced-mode evaluation
+
+- Date/agent: 2026-08-29 / Codex
+- Status: `always` mode rejected; `hybrid` mode remains current
+- Hypothesis: forcing DeepSeek intent parsing on every canonical turn may improve
+  Buying/Browsing interpretation, intent replacement, early conversion, and ranking.
+- Changes and files: no ranking/parser code changes; ran a live smoke test followed by
+  the unchanged 200-session evaluator with `DEEPSEEK_MODE=always`. The credential was
+  stored only in a permission-restricted temporary file, removed immediately after the
+  run, and never added to Git.
+- Tests/commands: `python3 -m experiments.smoke_deepseek_intent`; full evaluator with
+  `PYTHONHASHSEED=2`; session-level comparison against the final offline result.
+- Before metrics: hybrid/offline Hit Rate 0.995, MRR 0.705536, MTTC 2.235,
+  TechnicalScore 0.884461, runtime 81.83 seconds, zero tokens.
+- After metrics: forced DeepSeek Hit Rate 1.0, MRR 0.619107, MTTC 2.175,
+  TechnicalScore 0.862232, runtime 619.27 seconds, 236,537 reported tokens.
+- Per-scenario effects: Buying MRR 0.589484, Browsing 0.581930, Intent Override
+  0.778611, and Boundary 0.675000. All scenario Hit Rates reached 1.0. MTTC was Buying
+  1.625, Browsing 2.05, Intent Override 3.866667, and Boundary 2.5.
+- Runtime/cost effects: 435 API attempts; average 435.8 prompt and 108.0 completion
+  tokens per response; 7.57x offline runtime. An all-input-cache-miss upper estimate at
+  current DeepSeek V4 Flash pricing is approximately $0.0397; actual billing may be
+  lower because cache-hit tokens were not retained by the evaluator.
+- Findings and risks: reciprocal rank improved in 36 sessions, worsened in 62, and was
+  unchanged in 102. Thirty-two sessions hit earlier, 28 later, and 140 on the same
+  turn. The model recovered the one offline miss with no hit-to-miss regressions, but
+  ranking loss dominated the small Hit Rate/MTTC gains. Canonical templates are better
+  handled by deterministic rules.
+- Next recommended action: retain `hybrid`, create a frozen paraphrase-only test set,
+  and trigger DeepSeek only when no high-confidence rule matches. Do not use `always`
+  for official scoring.
+
+### Iteration 9 — Recorded 40-session LLM audit
+
+- Date/agent: 2026-08-29 / Codex
+- Status: completed; export retained locally and `always` remains rejected
+- Hypothesis: a bounded, scenario-stratified live run with per-call records will make
+  DeepSeek behavior, validation failures, latency, cache use, and cost auditable
+  without exposing credentials or changing the accepted ranking pipeline.
+- Changes and files: added opt-in secret-free JSONL request/response logging to
+  `starter/deepseek_client.py`; added `DEEPSEEK_LOG_PATH` documentation and ignored
+  `artifacts/llm_exports/`; exposed `--holdout-fraction` in
+  `experiments/evaluate_split.py`; added logging and exact 40-session split tests.
+- Tests/commands: `python3 -m unittest -v` (20/20 passed); live `always` evaluation on
+  the deterministic scenario-stratified 20% holdout; matched rule-only control;
+  JSONL/schema, secret-scan, Git-ignore, temporary-credential, and diff checks.
+- Before metrics: matched rule-only 40-session control Hit Rate 1.0, MRR 0.779028,
+  MTTC 2.075, Efficiency 0.8925, TechnicalScore 0.912208, runtime 15.76 seconds.
+- After metrics: recorded DeepSeek 40-session run Hit Rate 1.0, MRR 0.740724,
+  MTTC 2.125, Efficiency 0.8875, TechnicalScore 0.899717, runtime 120.06 seconds.
+- Per-scenario effects: DeepSeek versus rules MRR was Buying 0.748437 versus 0.764757,
+  Browsing 0.778373 versus 0.805729, Intent Override 0.783333 versus 0.916667, and
+  Boundary 0.250000 versus 0.266667. All scenario Hit Rates remained 1.0.
+- Runtime/cost effects: 85 logged API calls; 38,197 prompt and 9,512 completion tokens
+  (47,709 total), including 32,896 prompt cache-hit and 5,301 cache-miss tokens. Mean,
+  median, p95, and maximum latency were 1.1644, 1.1233, 1.5316, and 2.1688 seconds.
+  Estimated cache-aware cost was approximately $0.0035 at the pricing used for this
+  audit. The evaluator reported 46,677 accepted tokens; the 1,032-token difference is
+  from two invalid model outputs that were logged but correctly fell back to rules.
+- Findings and risks: 83 records passed strict validation; two returned unsupported
+  `fabric` attributes and fell back safely. The export contains request payloads, raw
+  and parsed responses, token/cache counts, and latency, but no authorization header
+  or API key. The temporary credential was removed, and all export files are ignored
+  by Git. Forced LLM parsing again reduced ranking quality relative to rules.
+- Next recommended action: use the same logger on a frozen paraphrase-only suite in
+  default `hybrid` mode; do not expand the trigger or use `always` for official scoring
+  unless cross-validated results beat the deterministic parser.
+
+### Iteration 10 — Main-branch integration validation
+
+- Date/agent: 2026-08-29 / Codex
+- Status: accepted on `main`
+- Hypothesis: integrating the DeepSeek parser and audit logger with the remote-main
+  recommendation-reset fix will preserve its wording robustness while retaining a
+  network-free canonical evaluation path.
+- Changes and files: rebased the verified implementation onto current `origin/main`;
+  resolved `starter/Ranker.py` by retaining signal-based LLM intents, selective
+  attribute replacement, and remote main's `changed`-based clearing of previously
+  recommended products; retained and renumbered both branches' progress history.
+- Tests/commands: `python3 -m unittest -v` (20/20 passed); full 200-session evaluator
+  with `PYTHONHASHSEED=2`; `git diff --check`; tracked-artifact and credential scans.
+- Before metrics: remote-main Iteration 6 reported Hit Rate 0.995 and TechnicalScore
+  0.878110 after generalizing recommendation resets.
+- After metrics: Hit Rate 0.995, MRR 0.687145, MTTC 2.265, Efficiency 0.8735, and
+  TechnicalScore 0.878343; zero prompt and completion tokens in default hybrid mode.
+- Per-scenario effects: Buying Hit Rate 0.9875, MRR 0.637108, MTTC 1.825; Browsing
+  1.0, 0.670427, 2.15; Intent Override 1.0, 0.881429, 3.866667; Boundary 1.0,
+  0.638333, 1.9.
+- Runtime/cost effects: no API calls and $0 model cost on canonical templates; this
+  verification run was not externally timed.
+- Findings and risks: the merged implementation slightly improves the recorded
+  remote-main TechnicalScore while preserving its broader reset behavior. It remains
+  below the earlier pre-merge feature score because ordinary new information can
+  reopen previously shown candidates; this tradeoff is documented rather than hidden.
+- Next recommended action: evaluate the generalized reset policy with multiple frozen
+  override-paraphrase folds before deciding whether its robustness gain justifies the
+  MRR tradeoff.
 
 ## Template for the Next Iteration
 

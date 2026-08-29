@@ -2,10 +2,11 @@
 
 ## Summary
 
-The submitted agent is a stateful, fully offline shopping search system. It combines
-SQLite FTS5 candidate retrieval with structured constraint reranking and an adaptive
-clarification policy. It does not require an LLM, API key, network access, model
-download, or third-party Python dependency.
+The submitted agent is a stateful hybrid shopping search system. It combines SQLite
+FTS5 candidate retrieval with structured constraint reranking and an adaptive
+clarification policy. Its default deterministic path requires no LLM, API key, network
+access, model download, or third-party Python dependency. When configured, a
+rule-first DeepSeek parser handles ambiguous or paraphrased messages.
 
 ## Architecture
 
@@ -30,6 +31,21 @@ Generic evaluator feedback is excluded from the search query. When an intent ove
 occurs, the superseded initial preference is removed, compatible constraints remain,
 and previously shown products become eligible again because an early target cannot be
 scored before the override turn.
+
+### Intent parsing
+
+Known simulator templates are parsed locally into Buying, Browsing, information,
+override, Boundary, or no-information intents. If `DEEPSEEK_API_KEY` is present and
+`DEEPSEEK_MODE=hybrid`, messages that do not match those high-confidence templates are
+sent with a compact session-state summary to DeepSeek `deepseek-v4-flash`. The model
+must return validated JSON containing the intent signal, shopping mode, typed
+constraints, replacement attribute, declined attribute, and confidence. Invalid or
+low-confidence output falls back to the local parser.
+
+DeepSeek never selects product identifiers or searches the catalog. Only the validated
+state update is passed to the deterministic retrieval and ranking stages. Structured
+attribute replacement allows a paraphrased override to replace one preference while
+preserving compatible constraints.
 
 ### Clarification policy
 
@@ -62,17 +78,36 @@ deterministic.
 
 ## Model, Cost, and Privacy
 
-- Model: none
-- External API: none
-- Network required during scoring: no
-- Prompt/completion tokens: 0
-- Estimated inference cost: $0
-- Sensitive data sent externally: none
+- Default model path: deterministic rules, no model
+- Optional model: DeepSeek `deepseek-v4-flash` JSON chat completion
+- External API: optional; disabled when `DEEPSEEK_API_KEY` is absent
+- Network required during scoring: no, because all model failures fall back locally
+- Offline public-run prompt/completion tokens: 0 / 0
+- Offline public-run estimated inference cost: $0
+- Optional API payload: current message plus compact category/preference/question state;
+  catalog products and identifiers are never sent
 
-The final public evaluation completed in 42.23 seconds on the development machine.
-That run covered 200 sessions and 451 calls to `respond`, or about 0.21 seconds per
-session and 0.094 seconds per response end to end, including catalog loading and index
-construction. Runtime varies with CPU and SQLite builds.
+The final offline public evaluation completed in 81.83 seconds on the development
+machine. That run covered 200 sessions, including catalog loading and index
+construction. Runtime varies with CPU, SQLite builds, and machine load. A forced
+DeepSeek run on every turn took 619.27 seconds and reported 189,567 prompt plus 46,970
+completion tokens. It reached Hit Rate 1.0 but reduced MRR to 0.619107 and
+TechnicalScore to 0.862232, so this `always` configuration was rejected. Rule-first
+`hybrid` remains the recommended mode.
+
+A separate deterministic scenario-stratified 40-session audit recorded every model
+request and response. It produced 85 API-call records, of which 83 passed strict
+validation and two fell back to rules because the model returned an unsupported
+attribute. The DeepSeek run scored Hit Rate 1.0, MRR 0.740724, MTTC 2.125, and
+TechnicalScore 0.899717. The matched rule-only control scored 1.0, 0.779028, 2.075,
+and 0.912208 respectively. Logged API usage was 38,197 prompt and 9,512 completion
+tokens, with 32,896 prompt cache-hit tokens. Mean request latency was 1.1644 seconds
+and estimated cache-aware cost was approximately $0.0035.
+
+Setting `DEEPSEEK_LOG_PATH` enables the secret-free JSONL audit log. Each record
+contains the compact intent request, raw and parsed response, token/cache counts, and
+latency. Authorization headers and API keys are never written. The recommended export
+directory, `artifacts/llm_exports/`, is ignored by Git.
 
 The system uses only the participant-visible aggregate profile fields and frozen
 catalog metadata.
@@ -97,14 +132,14 @@ Measured on the released 200-session public set:
 | Metric | Weak starter | Submitted agent |
 | --- | ---: | ---: |
 | Hit Rate@10 | 0.125 | 0.995 |
-| MRR | 0.068034 | 0.693675 |
-| MTTC | 9.81 | 2.26 |
-| Efficiency | 0.119 | 0.874 |
-| TechnicalScore | 0.106710 | 0.880402 |
+| MRR | 0.068034 | 0.687145 |
+| MTTC | 9.81 | 2.265 |
+| Efficiency | 0.119 | 0.8735 |
+| TechnicalScore | 0.106710 | 0.878343 |
 
 Scenario Hit Rate@10 is 1.0 for Browsing, Boundary, and Intent Override, and
-0.9875 for Buying. Scenario MRR is 0.681939 for Browsing, 0.638333 for Boundary,
-0.849299 for Intent Override, and 0.653968 for Buying. These are development-set
+0.9875 for Buying. Scenario MRR is 0.670427 for Browsing, 0.638333 for Boundary,
+0.881429 for Intent Override, and 0.637108 for Buying. These are development-set
 results and are not a guarantee of private-set performance.
 
 ## Demonstrated Interaction
@@ -131,6 +166,9 @@ recommendations contain ordered, catalog-valid `parent_asin` values.
 - The index is rebuilt for each agent process rather than persisted.
 - Public-set tuning can overestimate private-set performance; no public target IDs or
   labels are embedded in the implementation.
+- The optional LLM path targets parsing coverage rather than canonical public
+  templates. Forced use reduced public ranking quality, so value on a dedicated
+  paraphrase suite remains unproven.
 
 ## Team Contributions
 

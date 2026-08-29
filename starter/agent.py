@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from starter.intents import Intent
+from starter.Intent_generator import IntentGenerator
 from starter.Preference import PreferenceStore
 from starter.Ranker import Ranker
 from starter.ranges import CatalogRegistryBuilder
@@ -37,11 +37,13 @@ class Agent:
         diversity_strength: float = 6.0,
         broad_question_limit: int = 2,
         expand_query_terms: bool = False,
+        intent_generator: IntentGenerator | None = None,
     ) -> None:
         self.catalog_path = Path(catalog_path)
         self.broad_question_limit = max(1, int(broad_question_limit))
         self.connection = sqlite3.connect(":memory:")
         self._sessions: dict[str, PreferenceStore] = {}
+        self.intent_generator = intent_generator or IntentGenerator.from_env()
         self._build_index()
         self.ranker = Ranker(
             self.connection,
@@ -50,6 +52,32 @@ class Agent:
             diversity_strength=diversity_strength,
             expand_query_terms=expand_query_terms,
         )
+
+    @property
+    def diversity_strength(self) -> float:
+        """Compatibility proxy for the ranker's diversity control."""
+        return self.ranker.diversity_strength
+
+    @diversity_strength.setter
+    def diversity_strength(self, value: float) -> None:
+        self.ranker.diversity_strength = max(0.0, float(value))
+
+    @property
+    def expand_query_terms(self) -> bool:
+        """Compatibility proxy for opt-in lexical expansion."""
+        return self.ranker.expand_query_terms
+
+    @expand_query_terms.setter
+    def expand_query_terms(self, value: bool) -> None:
+        self.ranker.expand_query_terms = bool(value)
+
+    def _fetch(self, expression: str, limit: int) -> list[tuple]:
+        """Compatibility proxy for cached FTS retrieval."""
+        return self.ranker._fetch(expression, limit)
+
+    def _expand_terms(self, terms: list[str]) -> list[str]:
+        """Compatibility proxy for the ranker's query expansion."""
+        return self.ranker._expand_terms(terms)
 
     def _build_index(self) -> None:
         cursor = self.connection.cursor()
@@ -103,7 +131,7 @@ class Agent:
         pref = self._sessions[session_id]
 
         # Parse → update preference → rank → ask
-        intent = Intent.from_message(user_message, turn)
+        intent = self.intent_generator.generate(user_message, turn, pref)
         self.ranker.apply_intent(pref, intent)
         recommendations = self.ranker.rank(pref, top_k)
 
@@ -118,5 +146,8 @@ class Agent:
             "message": message,
             "ask_attribute": ask_attribute,
             "recommendations": recommendations,
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            "usage": {
+                "prompt_tokens": intent.prompt_tokens,
+                "completion_tokens": intent.completion_tokens,
+            },
         }

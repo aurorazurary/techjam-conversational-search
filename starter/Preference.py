@@ -81,6 +81,7 @@ class PreferenceStore:
     seen_recommendations: set[str] = field(default_factory=set)
     broad_answers: int = 0
     broad_exhausted: bool = False
+    shopping_mode: str = "unknown"
 
     def add_preference(self, attribute: str, value: str, hardness: float = HARDNESS_DISCLOSED) -> bool:
         """Add a preference if not a duplicate. Returns True if added."""
@@ -98,10 +99,38 @@ class PreferenceStore:
         norm = _normalized(value)
         self.preferences = [p for p in self.preferences if _normalized(p.value) != norm]
 
+    def remove_preferences_by_attribute(self, attribute: str) -> None:
+        """Remove active preferences for one structured attribute."""
+        self.preferences = [p for p in self.preferences if p.attribute != attribute]
+
     @property
     def constraint_values(self) -> list[str]:
         """Raw value strings for all preferences (backward compat with Ranker)."""
         return [p.value for p in self.preferences]
+
+    @property
+    def constraints(self) -> list[str]:
+        """Compatibility alias for the pre-refactor session-state API."""
+        return self.constraint_values
+
+    def intent_context(self) -> dict:
+        """Return the compact, catalog-free context used by an intent parser."""
+        return {
+            "shopping_mode": self.shopping_mode,
+            "category": self.category,
+            "preferences": [
+                {
+                    "attribute": preference.attribute,
+                    "value": preference.value,
+                    "strength": "hard" if preference.is_hard else "soft",
+                }
+                for preference in self.preferences
+            ],
+            "last_asked_attribute": (
+                self.asked_attributes[-1] if self.asked_attributes else None
+            ),
+            "declined_attributes": sorted(self.declined_attributes),
+        }
 
     def hard_preferences(self) -> list[Preference]:
         """Preferences that are hard requirements."""

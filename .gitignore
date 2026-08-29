@@ -19,3 +19,4 @@ tests/test_organizer_pipeline.py
 *.catalog.jsonl
 starter/catalog.jsonl.gz
 catalog.jsonl.gz
+artifacts/llm_exports/

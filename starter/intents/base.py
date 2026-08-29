@@ -53,6 +53,11 @@ class Intent:
     constraints: list[dict] = field(default_factory=list)
     override_signal: bool = False
     no_preference_attr: str | None = None
+    replace_attribute: str | None = None
+    shopping_mode: str = "unknown"
+    confidence: float = 1.0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     raw_text: str = ""
 
     @classmethod

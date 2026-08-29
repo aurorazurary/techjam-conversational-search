@@ -8,7 +8,9 @@ class BrowsingIntent(Intent):
     """Customer is exploring without strong constraints."""
 
     def __init__(self, message: str) -> None:
-        super().__init__(scenario_signal="browsing", raw_text=message)
+        super().__init__(
+            scenario_signal="browsing", shopping_mode="browsing", raw_text=message
+        )
         cat_match = CATEGORY_RE.search(message)
         if cat_match:
             self.category_text = cat_match.group(1).strip()

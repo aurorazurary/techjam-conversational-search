@@ -8,7 +8,9 @@ class BuyingIntent(Intent):
     """Customer has a clear requirement from the start."""
 
     def __init__(self, message: str) -> None:
-        super().__init__(scenario_signal="buying", raw_text=message)
+        super().__init__(
+            scenario_signal="buying", shopping_mode="buying", raw_text=message
+        )
         cat_match = CATEGORY_RE.search(message)
         if cat_match:
             self.category_text = cat_match.group(1).strip()
