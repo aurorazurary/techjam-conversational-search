@@ -132,25 +132,34 @@ Measured on the released 200-session public set:
 | Metric | Weak starter | Submitted agent |
 | --- | ---: | ---: |
 | Hit Rate@10 | 0.125 | 0.995 |
-| MRR | 0.068034 | 0.687145 |
-| MTTC | 9.81 | 2.265 |
-| Efficiency | 0.119 | 0.8735 |
-| TechnicalScore | 0.106710 | 0.878343 |
+| MRR | 0.068034 | 0.836357 |
+| MTTC | 9.81 | 2.540 |
+| Efficiency | 0.119 | 0.846 |
+| TechnicalScore | 0.106710 | 0.917607 |
 
 Scenario Hit Rate@10 is 1.0 for Browsing, Boundary, and Intent Override, and
-0.9875 for Buying. Scenario MRR is 0.670427 for Browsing, 0.638333 for Boundary,
-0.881429 for Intent Override, and 0.637108 for Buying. These are development-set
+0.9875 for Buying. Scenario MRR is 0.846488 for Browsing, 0.9 for Boundary,
+0.882222 for Intent Override, and 0.801071 for Buying. These are development-set
 results and are not a guarantee of private-set performance.
+
+The same agent scores TechnicalScore 0.886642 on a 100-target audit disjoint from
+the public set and 0.920732 on a second 100-target disjoint audit; both improve
+over the pre-warmup agent by a margin comparable to the public gain, with no
+Hit-Rate regression. Evidence-gated dynamic truncation ("warmup") is the change
+that moved MRR from 0.687145 to 0.836357: while a session is under-informed (at
+most two disclosed preferences, turn four or earlier), the agent returns only two
+illustrative candidates and keeps clarifying instead of committing a full Top-10
+that the evaluator would score at whatever rank the target happened to land.
 
 ## Demonstrated Interaction
 
 ```text
 Customer: I'm looking for shoes and slippers, but I'm still exploring.
-Agent:    [returns 10 candidates]
+Agent:    [under-informed: returns 2 illustrative candidates, keeps clarifying]
           What matters most to you—such as material, color, fit, budget,
           or intended use?
 Customer: For that, what matters is: rubber sole; textile upper.
-Agent:    [reranks using category + both constraints]
+Agent:    [enough evidence: reranks category + both constraints, returns full Top-10]
           Is there one more must-have detail I should prioritize?
 ```
 

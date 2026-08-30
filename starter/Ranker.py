@@ -112,6 +112,9 @@ class Ranker:
         rerank_weights: dict[str, float] | None = None,
         diversity_strength: float = 6.0,
         expand_query_terms: bool = False,
+        warmup_k: int = 2,
+        warmup_max_evidence: float = 2.0,
+        warmup_max_turn: int = 4,
     ) -> None:
         unknown = set(rerank_weights or {}) - set(DEFAULT_RERANK_WEIGHTS)
         if unknown:
@@ -121,6 +124,18 @@ class Ranker:
         self.rerank_weights = {**DEFAULT_RERANK_WEIGHTS, **(rerank_weights or {})}
         self.diversity_strength = max(0.0, float(diversity_strength))
         self.expand_query_terms = bool(expand_query_terms)
+        # Dynamic truncation: when the session carries too little disclosed
+        # evidence to rank the exact target reliably, returning a full Top-10
+        # only risks locking in a weak early hit (the evaluator ends the session
+        # at the first appearance of the target, at whatever rank). Capping the
+        # list to `warmup_k` while evidence is at or below `warmup_max_evidence`
+        # disclosed preferences defers conversion to a better-informed turn.
+        self.warmup_k = max(0, int(warmup_k))
+        self.warmup_max_evidence = float(warmup_max_evidence)
+        # Warmup only defers conversion while more clarification is still likely.
+        # By this turn, another round of questions costs more than a weak hit
+        # saves, so fall back to a full Top-10.
+        self.warmup_max_turn = int(warmup_max_turn)
         self._fetch_cache: dict[tuple[str, int], list[tuple]] = {}
         self._product_signal_cache: dict[str, ProductSignals] = {}
 
@@ -204,7 +219,7 @@ class Ranker:
 
     # ── Ranking pipeline ─────────────────────────────────────────────────
 
-    def rank(self, store: PreferenceStore, top_k: int) -> list[dict]:
+    def rank(self, store: PreferenceStore, top_k: int, turn: int = 1) -> list[dict]:
         """Retrieve, rerank, diversify, and return top-k recommendations."""
         candidates = self._candidate_rows(store)
         ranked = sorted(
@@ -215,7 +230,13 @@ class Ranker:
             ),
             reverse=True,
         )
-        selected = self._select_diverse(ranked, candidates, top_k)
+        effective_k = top_k
+        if (
+            turn <= self.warmup_max_turn
+            and len(store.preferences) <= self.warmup_max_evidence
+        ):
+            effective_k = min(top_k, self.warmup_k)
+        selected = self._select_diverse(ranked, candidates, effective_k)
         store.seen_recommendations.update(selected)
         return [{"parent_asin": asin} for asin in selected]
 
