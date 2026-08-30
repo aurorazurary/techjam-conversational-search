@@ -37,6 +37,9 @@ class Agent:
         diversity_strength: float = 6.0,
         broad_question_limit: int = 2,
         expand_query_terms: bool = False,
+        warmup_k: int = 2,
+        warmup_max_evidence: float = 2.0,
+        warmup_max_turn: int = 4,
         intent_generator: IntentGenerator | None = None,
     ) -> None:
         self.catalog_path = Path(catalog_path)
@@ -51,6 +54,9 @@ class Agent:
             rerank_weights=rerank_weights,
             diversity_strength=diversity_strength,
             expand_query_terms=expand_query_terms,
+            warmup_k=warmup_k,
+            warmup_max_evidence=warmup_max_evidence,
+            warmup_max_turn=warmup_max_turn,
         )
 
     @property
@@ -133,7 +139,7 @@ class Agent:
         # Parse → update preference → rank → ask
         intent = self.intent_generator.generate(user_message, turn, pref)
         self.ranker.apply_intent(pref, intent)
-        recommendations = self.ranker.rank(pref, top_k)
+        recommendations = self.ranker.rank(pref, top_k, turn)
 
         if turn < 10:
             message, ask_attribute = pref.next_question(self.broad_question_limit)

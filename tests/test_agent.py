@@ -165,6 +165,46 @@ class AgentTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.agent.respond("missing", "I need shoes", 1, 10)
 
+    def test_warmup_truncates_under_informed_early_turns(self) -> None:
+        self.reset()
+        # Turn 1, only a category disclosed (zero preferences): the list is
+        # capped to warmup_k so a weak early hit cannot end the session.
+        first = self.agent.respond(
+            "session", "I'm looking for Women Shoes, but I'm still exploring.", 1, 10
+        )
+        self.assertLessEqual(len(first["recommendations"]), 2)
+
+    def test_warmup_lifts_once_enough_evidence_is_disclosed(self) -> None:
+        self.reset()
+        self.agent.respond(
+            "session", "I'm looking for Women Shoes, but I'm still exploring.", 1, 10
+        )
+        self.agent.respond(
+            "session", "For that, what matters is: Rubber sole; Leather upper.", 2, 10
+        )
+        third = self.agent.respond(
+            "session", "For that, what matters is: Durable outdoor hiking boot.", 3, 10
+        )
+        state = self.agent._sessions["session"]
+        self.assertGreater(len(state.preferences), 2)
+        self.assertGreater(len(third["recommendations"]), 2)
+
+    def test_warmup_lifts_on_late_turns_even_when_under_informed(self) -> None:
+        from starter.Preference import PreferenceStore
+
+        # Under-informed (no disclosed preferences), but past the warmup turn
+        # window: a full Top-K is returned rather than a truncated list.
+        early = self.agent.ranker.rank(
+            PreferenceStore(profile_tags=[], category="Women Shoes"), 10, turn=2
+        )
+        late = self.agent.ranker.rank(
+            PreferenceStore(profile_tags=[], category="Women Shoes"),
+            10,
+            turn=self.agent.ranker.warmup_max_turn + 1,
+        )
+        self.assertLessEqual(len(early), 2)
+        self.assertGreater(len(late), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
