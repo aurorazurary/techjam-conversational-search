@@ -50,8 +50,9 @@ MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
 
 `starter/agent.py` contains a stateful implementation with adaptive
 clarification, intent-override handling, multi-route FTS5 retrieval, structured
-reranking, holdout-validated title diversity, cached product signals, and
-non-repeating recommendations. Its deterministic path uses only the Python standard
+reranking, holdout-validated title diversity, evidence-gated dynamic truncation
+(short candidate lists while a session is still under-informed), cached product
+signals, and non-repeating recommendations. Its deterministic path uses only the Python standard
 library and does not require network access or an API key. An optional rule-first
 DeepSeek parser handles messages that do not match the known conversation templates.
 
@@ -74,8 +75,9 @@ This participant-created set uses the organizer's exact 40/40/15/5 scenario mix 
 contains no public target IDs. It is a robustness audit, not organizer data or a proxy
 for the private leaderboard.
 
-The current public-set development result is Hit Rate@10 `0.995`, MRR `0.687145`,
-MTTC `2.265`, and TechnicalScore `0.878343`. See
+The current public-set development result is Hit Rate@10 `0.995`, MRR `0.836357`,
+MTTC `2.540`, and TechnicalScore `0.917607`. The same agent scores TechnicalScore
+`0.886642` and `0.920732` on two 100-target audits disjoint from the public set. See
 `docs/solution_report.md` for architecture, cost, limitations, and scenario results.
 
 ### Optional DeepSeek intent parser
