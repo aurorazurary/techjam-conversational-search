@@ -31,6 +31,28 @@ python3 -m evaluator.local_evaluator \
   --output /tmp/techjam_generalization_results.json
 ```
 
+## `generalization_set_v2.jsonl`
+
+A second, independently-seeded audit fixture built with the same script and schema
+as `generalization_set.jsonl` above, to check whether that seed's -0.023
+TechnicalScore gap (vs. the public 200) was a systemic weakness or ordinary
+seed-to-seed variance. Result: this seed scores 0.874588 (-0.004 vs public), and
+its one miss is a different scenario (1 Intent Override) than the first seed's
+three Browsing misses -- consistent with variance, not a single systemic gap.
+
+- Deterministic seed: `techjam-generalization-v2`
+- SHA-256: `0140cde20ee3c86945439690d0b1534181037da549dcfc5c140db4b5ef54d8d3`
+
+Regenerate and evaluate it with:
+
+```bash
+python3 -m experiments.generate_generalization_set \
+  --seed techjam-generalization-v2 --output data/generalization_set_v2.jsonl
+python3 -m evaluator.local_evaluator \
+  --dataset data/generalization_set_v2.jsonl \
+  --output /tmp/techjam_generalization_v2_results.json
+```
+
 ## `catalog.jsonl`
 
 Download `catalog.jsonl.gz` from the GitHub Release and decompress it as `catalog.jsonl` in this directory. Expected row count: 50,000.
