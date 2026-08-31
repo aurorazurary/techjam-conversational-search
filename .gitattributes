@@ -1,0 +1,8 @@
+# Force LF line endings on checkout regardless of the puller's core.autocrlf
+# setting. Without this, Windows checkouts with autocrlf=true (Git's own
+# recommended default there) silently convert LF -> CRLF in tracked text
+# files -- git reports no diff (autocrlf normalizes for comparison), but the
+# actual working-tree bytes no longer match the committed blob. That broke
+# tests/test_generalization_set.py's frozen SHA-256 check on Windows: the
+# file content was identical, only the line endings differed.
+* text=auto eol=lf
