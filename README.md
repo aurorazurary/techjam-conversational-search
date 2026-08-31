@@ -1,6 +1,19 @@
 # TechJam Conversational E-Commerce Search Challenge
 
-Build an AI shopping agent that asks useful follow-up questions and recommends the customer's hidden target product within at most 10 turns.
+## Project Overview
+
+This project is a stateful conversational shopping agent for the TechJam
+Conversational E-Commerce Search Challenge. Given an anonymized preference profile
+and a short customer message, it asks focused follow-up questions and recommends the
+customer's hidden target product within at most 10 turns.
+
+The solution combines conversation memory, Buying/Browsing intent handling, selective
+preference replacement, adaptive clarification, SQLite FTS5 retrieval, structured
+reranking, title diversity, evidence-gated recommendation warmup, and bounded late
+exploration. Its recommended path is deterministic, uses only the Python standard
+library, and works without network access. An optional DeepSeek parser is available
+for ambiguous or paraphrased messages, but it never selects product identifiers or
+controls ranking.
 
 ## What You Receive
 
@@ -21,64 +34,132 @@ For each session, your agent receives an anonymized preference profile and a sho
 
 The session ends when the target product appears in the scored Top 10 or after turn 10. Sessions cover Buying, Browsing, Intent Override, and Boundary behavior.
 
-## Download the Catalog
+## Setup and Installation
 
-Download `catalog.jsonl.gz` from the GitHub Release attached to this repository, then run:
+### Prerequisites
+
+- Python 3.10 or later is recommended. The implementation has also been exercised on
+  Python 3.9.6.
+- Python's SQLite build must include FTS5.
+- Git and sufficient local disk space for the 50,000-product catalog.
+
+Clone the repository and enter it:
+
+```bash
+git clone https://github.com/aurorazurary/techjam-conversational-search.git
+cd techjam-conversational-search
+```
+
+The agent intentionally has no third-party runtime dependencies. Running the standard
+installation command is still useful for a reproducible environment:
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 -c "import sqlite3; assert sqlite3.connect(':memory:').execute('select sqlite_compileoption_used(\"ENABLE_FTS5\")').fetchone()[0]"
+```
+
+### Download the catalog
+
+Download `catalog.jsonl.gz` from the
+[GitHub Releases page](https://github.com/aurorazurary/techjam-conversational-search/releases),
+place it in the repository root, and verify the published checksum:
+
+```bash
+shasum -a 256 catalog.jsonl.gz
+# Expected:
+# 07fd142631fd6b03e2b4d09988c3eb7d53720e9d57010c79db48eeaada50a8f8
+```
+
+Extract it into the location used by the agent:
 
 ```bash
 gzip -dk catalog.jsonl.gz
 mv catalog.jsonl data/catalog.jsonl
+test -s data/catalog.jsonl
 ```
 
-Verify the downloaded file using the published `SHA256SUMS` file.
+`data/catalog.jsonl` and the compressed catalog are intentionally ignored by Git and
+must not be committed. The canonical checksums are also recorded in
+`data/SHA256SUMS`.
 
-## Run the Starter
+## Steps to Reproduce the Results
 
-Python 3.10 or later is recommended. The starter uses only the Python standard library.
+The accepted benchmark configuration is the default constructor configuration. It
+uses the deterministic intent path on the organizer's canonical messages and requires
+no API key.
+
+### 1. Run the regression suite
 
 ```bash
-python3 -m evaluator.local_evaluator
+python3 -m unittest -v
 ```
 
-Edit `starter/agent.py` to implement your system. Do not edit the evaluator or public labels when reporting your local score.
-The command writes per-session results and aggregate metrics to `results.json`.
+Expected result: `30` tests pass.
+
+### 2. Evaluate the 200-session public set
+
+```bash
+PYTHONHASHSEED=2 python3 -m evaluator.local_evaluator \
+  --output /tmp/techjam_public_results.json
+```
+
+### 3. Evaluate both frozen disjoint-target audits
+
+```bash
+PYTHONHASHSEED=2 python3 -m evaluator.local_evaluator \
+  --dataset data/generalization_set.jsonl \
+  --output /tmp/techjam_generalization_results.json
+
+PYTHONHASHSEED=2 python3 -m evaluator.local_evaluator \
+  --dataset data/category_gap_set.jsonl \
+  --output /tmp/techjam_category_gap_results.json
+```
+
+Expected aggregate results for the accepted local configuration:
+
+| Dataset | Sessions | Hit Rate@10 | MRR | MTTC | Efficiency | TechnicalScore |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Public | 200 | 0.995 | 0.845121 | 2.540 | 0.846 | 0.920236 |
+| Generalization audit | 100 | 0.980 | 0.808778 | 2.830 | 0.817 | 0.896033 |
+| Category-gap audit | 100 | 1.000 | 0.837635 | 2.590 | 0.841 | 0.919490 |
+
+The two 100-session files are participant-created robustness audits with targets
+disjoint from the public set and each other. They are not organizer private data or a
+proxy for the private leaderboard. Runtime varies with CPU and SQLite build; the
+metrics are deterministic for the catalog checksum above.
+
+### 4. Reproduce an optional rejected retrieval experiment
+
+The category-plus-all-constraints route is retained for comparison but disabled by
+default because it did not improve both mean and worst-set TechnicalScore:
+
+```bash
+PYTHONHASHSEED=2 python3 -m experiments.evaluate_conjunctive_gate \
+  --mode post_warmup \
+  --dataset data/generalization_set.jsonl \
+  --output /tmp/techjam_gated_generalization.json
+```
 
 The included weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
 MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
 
-## Included Hybrid Agent
+## Solution Architecture
 
 `starter/agent.py` contains a stateful implementation with adaptive
 clarification, intent-override handling, multi-route FTS5 retrieval, structured
 reranking, holdout-validated title diversity, evidence-gated dynamic truncation
 (short candidate lists while a session is still under-informed), cached product
-signals, and non-repeating recommendations. Its deterministic path uses only the Python standard
+and query signals, coarse candidate pruning, a bounded turn-9 breadth fallback, and
+non-repeating recommendations. Its deterministic path uses only the Python standard
 library and does not require network access or an API key. An optional rule-first
 DeepSeek parser handles messages that do not match the known conversation templates.
+An experimental category-plus-all-constraints AND route can be evaluated in
+`always` or `post_warmup` mode, but is disabled by default because neither mode beat
+warmup-only on both mean and worst-set TechnicalScore.
 
-Run its regression tests and public evaluation with:
-
-```bash
-python3 -m unittest -v
-python3 -m evaluator.local_evaluator
-```
-
-Run the frozen 100-session, disjoint-target audit with the same evaluator contract:
-
-```bash
-python3 -m evaluator.local_evaluator \
-  --dataset data/generalization_set.jsonl \
-  --output /tmp/techjam_generalization_results.json
-```
-
-This participant-created set uses the organizer's exact 40/40/15/5 scenario mix and
-contains no public target IDs. It is a robustness audit, not organizer data or a proxy
-for the private leaderboard.
-
-The current public-set development result is Hit Rate@10 `0.995`, MRR `0.836357`,
-MTTC `2.540`, and TechnicalScore `0.917607`. The same agent scores TechnicalScore
-`0.886642` and `0.920732` on two 100-target audits disjoint from the public set. See
-`docs/solution_report.md` for architecture, cost, limitations, and scenario results.
+See `progress.md` for the complete experiment history and
+`docs/solution_report.md` for architecture, cost, limitations, and scenario-level
+results.
 
 ### Optional DeepSeek intent parser
 
@@ -164,25 +245,58 @@ be measured and disclosed before relying on it for a submission. A forced live r
 documented in `progress.md`; it improved Hit Rate to 1.0 but reduced MRR and the overall
 TechnicalScore, so the default remains rule-first hybrid.
 
+## Limitations and Future Improvements
+
+The current system is intentionally lightweight and reliable offline, but that choice
+creates several limitations:
+
+- **Lexical retrieval has semantic limits.** SQLite FTS5 is fast and transparent, but
+  unfamiliar synonyms or conceptual matches may be missed without dense embeddings.
+- **Some products are genuinely under-specified.** Near-identical products with the
+  same category and boilerplate metadata cannot always be distinguished from the
+  preferences the customer simulator reveals. One public Buying session remains a
+  miss for this reason.
+- **Natural-language robustness needs a dedicated test.** The public and participant
+  audit sessions use canonical simulator wording. The optional DeepSeek path is meant
+  for paraphrases, but forcing it on every canonical turn was slower and reduced MRR;
+  its value on a frozen paraphrase suite is not yet proven.
+- **Generalization evidence is still limited.** The two disjoint-target audits are
+  participant-created, not organizer private data. The turn-9 breadth fallback's Hit
+  Rate gain comes from one recovered audit session, and category-gap Boundary MRR
+  declined on a five-session slice.
+- **The index is rebuilt per process.** Startup could be improved by safely persisting
+  and validating the FTS index for production use.
+
+Given more time, we would first build a frozen paraphrase/state-transition suite and
+category-grouped cross-validation folds. We would then evaluate a learned pairwise or
+listwise reranker and lightweight semantic retrieval, retaining them only if they
+improve both mean and worst-set TechnicalScore without reducing Hit Rate. Finally, we
+would measure p50/p95 per-turn latency in a clean Python 3.10+ environment, explore a
+persisted index, and improve customer-facing recommendation explanations.
+
 ## Files
 
 ```text
 data/public_set.jsonl             200 labeled development sessions
 data/generalization_set.jsonl     100 disjoint participant-created audit sessions
+data/category_gap_set.jsonl       100 category-coverage audit sessions
 docs/competition_specification.md participant rules and evaluation protocol
 docs/agent_api_contract.json      machine-readable Agent contract
 docs/evaluation_config.json       scoring configuration
 docs/baseline_results.json        reproducible weak-starter reference score
-starter/agent.py                  editable weak starter
+docs/devpost_project_description.md Devpost-ready project description
+docs/solution_report.md           architecture, cost, results, and limitations
+starter/agent.py                  agent entry point
 evaluator/local_evaluator.py      public-set simulator and scorer
 ```
 
-## Judging and Submission Policy
+## Project Documentation
 
+- Challenge behavior and metrics: `docs/competition_specification.md`
 - Participant submission requirements: `docs/submission_rules.md`
-- Organizer-only final judging controls: `organizer/JUDGING_RUNBOOK.md`
-- Organizer private release checklist: `organizer/private_release_checklist.md`
-- Judging day operations SOP: `organizer/JUDGING_DAY_SOP.md`
+- Full solution report: `docs/solution_report.md`
+- Devpost description draft: `docs/devpost_project_description.md`
+- Experiment history and current status: `progress.md`
 
 ## Data Source
 
