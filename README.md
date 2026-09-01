@@ -9,11 +9,10 @@ customer's hidden target product within at most 10 turns.
 
 The solution combines conversation memory, Buying/Browsing intent handling, selective
 preference replacement, adaptive clarification, SQLite FTS5 retrieval, structured
-reranking, title diversity, evidence-gated recommendation warmup, and bounded late
-exploration. Its recommended path is deterministic, uses only the Python standard
-library, and works without network access. An optional DeepSeek parser is available
-for ambiguous or paraphrased messages, but it never selects product identifiers or
-controls ranking.
+reranking, title diversity, and evidence-gated recommendation warmup. Its recommended
+path is deterministic, uses only the Python standard library, and works without
+network access. An optional DeepSeek parser is available for ambiguous or paraphrased
+messages, but it never selects product identifiers or controls ranking.
 
 ## What You Receive
 
@@ -94,7 +93,7 @@ no API key.
 python3 -m unittest -v
 ```
 
-Expected result: `30` tests pass.
+Expected result: `25` tests pass.
 
 ### 2. Evaluate the 200-session public set
 
@@ -119,26 +118,14 @@ Expected aggregate results for the accepted local configuration:
 
 | Dataset | Sessions | Hit Rate@10 | MRR | MTTC | Efficiency | TechnicalScore |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Public | 200 | 0.995 | 0.845121 | 2.540 | 0.846 | 0.920236 |
-| Generalization audit | 100 | 0.980 | 0.808778 | 2.830 | 0.817 | 0.896033 |
-| Category-gap audit | 100 | 1.000 | 0.837635 | 2.590 | 0.841 | 0.919490 |
+| Public | 200 | 0.995 | 0.836357 | 2.540 | 0.846 | 0.917607 |
+| Generalization audit | 100 | 0.970 | 0.798806 | 2.900 | 0.810 | 0.886642 |
+| Category-gap audit | 100 | 1.000 | 0.842440 | 2.600 | 0.840 | 0.920732 |
 
 The two 100-session files are participant-created robustness audits with targets
 disjoint from the public set and each other. They are not organizer private data or a
 proxy for the private leaderboard. Runtime varies with CPU and SQLite build; the
 metrics are deterministic for the catalog checksum above.
-
-### 4. Reproduce an optional rejected retrieval experiment
-
-The category-plus-all-constraints route is retained for comparison but disabled by
-default because it did not improve both mean and worst-set TechnicalScore:
-
-```bash
-PYTHONHASHSEED=2 python3 -m experiments.evaluate_conjunctive_gate \
-  --mode post_warmup \
-  --dataset data/generalization_set.jsonl \
-  --output /tmp/techjam_gated_generalization.json
-```
 
 The included weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
 MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
@@ -149,13 +136,10 @@ MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
 clarification, intent-override handling, multi-route FTS5 retrieval, structured
 reranking, holdout-validated title diversity, evidence-gated dynamic truncation
 (short candidate lists while a session is still under-informed), cached product
-and query signals, coarse candidate pruning, a bounded turn-9 breadth fallback, and
-non-repeating recommendations. Its deterministic path uses only the Python standard
-library and does not require network access or an API key. An optional rule-first
-DeepSeek parser handles messages that do not match the known conversation templates.
-An experimental category-plus-all-constraints AND route can be evaluated in
-`always` or `post_warmup` mode, but is disabled by default because neither mode beat
-warmup-only on both mean and worst-set TechnicalScore.
+and query signals, and non-repeating recommendations. Its deterministic path uses
+only the Python standard library and does not require network access or an API key.
+An optional rule-first DeepSeek parser handles messages that do not match the known
+conversation templates.
 
 See `progress.md` for the complete experiment history and
 `docs/solution_report.md` for architecture, cost, limitations, and scenario-level
@@ -261,9 +245,8 @@ creates several limitations:
   for paraphrases, but forcing it on every canonical turn was slower and reduced MRR;
   its value on a frozen paraphrase suite is not yet proven.
 - **Generalization evidence is still limited.** The two disjoint-target audits are
-  participant-created, not organizer private data. The turn-9 breadth fallback's Hit
-  Rate gain comes from one recovered audit session, and category-gap Boundary MRR
-  declined on a five-session slice.
+  participant-created, not organizer private data, and each is a single seed rather
+  than repeated cross-validated folds.
 - **The index is rebuilt per process.** Startup could be improved by safely persisting
   and validating the FTS index for production use.
 
