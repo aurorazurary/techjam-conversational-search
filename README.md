@@ -83,14 +83,14 @@ must not be committed. The canonical checksums are also recorded in
 
 ## Steps to Reproduce the Results
 
-The accepted benchmark configuration is the default constructor configuration. It
-uses the deterministic intent path on the organizer's canonical messages and requires
-no API key.
+The accepted benchmark configuration is the default constructor configuration with
+`DEEPSEEK_MODE=off`. This pins the deterministic intent path, requires no API key, and
+prevents a caller's shell environment from silently changing the measured behavior.
 
 ### 1. Run the regression suite
 
 ```bash
-python3 -m unittest -v
+DEEPSEEK_MODE=off PYTHONHASHSEED=2 python3 -m unittest -v
 ```
 
 Expected result: `25` tests pass.
@@ -98,18 +98,18 @@ Expected result: `25` tests pass.
 ### 2. Evaluate the 200-session public set
 
 ```bash
-PYTHONHASHSEED=2 python3 -m evaluator.local_evaluator \
+DEEPSEEK_MODE=off PYTHONHASHSEED=2 python3 -m evaluator.local_evaluator \
   --output /tmp/techjam_public_results.json
 ```
 
 ### 3. Evaluate both frozen disjoint-target audits
 
 ```bash
-PYTHONHASHSEED=2 python3 -m evaluator.local_evaluator \
+DEEPSEEK_MODE=off PYTHONHASHSEED=2 python3 -m evaluator.local_evaluator \
   --dataset data/generalization_set.jsonl \
   --output /tmp/techjam_generalization_results.json
 
-PYTHONHASHSEED=2 python3 -m evaluator.local_evaluator \
+DEEPSEEK_MODE=off PYTHONHASHSEED=2 python3 -m evaluator.local_evaluator \
   --dataset data/category_gap_set.jsonl \
   --output /tmp/techjam_category_gap_results.json
 ```
@@ -127,16 +127,13 @@ disjoint from the public set and each other. They are not organizer private data
 proxy for the private leaderboard. Runtime varies with CPU and SQLite build; the
 metrics are deterministic for the catalog checksum above.
 
-The included weak BM25 starter scores Hit Rate@10 `0.125`, MRR `0.068034`, and
-MTTC `9.81` on the released public set. See `docs/baseline_results.json`.
-
 ## Solution Architecture
 
 `starter/agent.py` contains a stateful implementation with adaptive
 clarification, intent-override handling, multi-route FTS5 retrieval, structured
 reranking, holdout-validated title diversity, evidence-gated dynamic truncation
-(short candidate lists while a session is still under-informed), cached product
-and query signals, and non-repeating recommendations. Its deterministic path uses
+(short candidate lists while a session is still under-informed), cached FTS queries
+and product signals, and non-repeating recommendations. Its deterministic path uses
 only the Python standard library and does not require network access or an API key.
 An optional rule-first DeepSeek parser handles messages that do not match the known
 conversation templates.
@@ -170,16 +167,10 @@ export DEEPSEEK_LOG_PATH="artifacts/llm_exports/deepseek_qna.jsonl"
 
 DeepSeek failures, timeouts, empty output, invalid JSON, invalid attributes, and
 low-confidence parses automatically fall back to the deterministic intent parser.
-On the 200-session public set, forced `always` mode scored `0.862232` versus
-`0.884461` for rule-first hybrid, used 236,537 tokens, and took 619.27 seconds.
-Therefore `always` is an experimental rejected mode, not the recommended submission
-configuration.
-
-A recorded 40-session, scenario-stratified `always` audit produced 85 API-call
-records, used 47,709 total API tokens, and cost an estimated `$0.0035`. Its
-TechnicalScore was `0.899717`, below the matched deterministic control's `0.912208`.
-The local JSONL export includes request payloads, raw and parsed responses, token-cache
-counts, and latency, but never the API key or authorization header.
+Forced `always` mode was tested on the public and both disjoint audit sets but scored
+below the accepted deterministic configuration on all three, so it remains an
+experimental diagnostic mode. Rejected-run metrics, token use, and latency are kept in
+`progress.md`; the headline results above show only the best accepted configuration.
 
 ## Agent Interface
 
@@ -245,8 +236,8 @@ creates several limitations:
   for paraphrases, but forcing it on every canonical turn was slower and reduced MRR;
   its value on a frozen paraphrase suite is not yet proven.
 - **Generalization evidence is still limited.** The two disjoint-target audits are
-  participant-created, not organizer private data, and each is a single seed rather
-  than repeated cross-validated folds.
+  participant-created, not organizer private data, and each is a single frozen seed
+  rather than repeated cross-validated folds.
 - **The index is rebuilt per process.** Startup could be improved by safely persisting
   and validating the FTS index for production use.
 
@@ -285,3 +276,15 @@ evaluator/local_evaluator.py      public-set simulator and scorer
 
 The catalog and sessions are derived from Amazon Reviews 2023 by McAuley Lab, UCSD. See `DATA_ATTRIBUTION.md` before using or redistributing the data.
 Sessions are sampled deterministically from the official Clothing 5-core leave-last-out split and joined to the frozen catalog.
+
+## Member Contribution
+
+**An Xiao**: Architectural design of the intent and preference system. Implement the soft preference mechanism
+
+**Zhu Rong**: Designed and optimised the retrieval and reranking pipeline, including stateful FTS5 search, structured scoring, caching. Implemented the optional DeepSeek intent parser with strict validation and an offline fallback,
+
+**Hao Rui**:Designed and implemented evidence-gated recommendation warmup, including configurable early result truncation, regression tests, parameter-sweep experiments, cross-dataset validation, and benchmark documentation. This substantially improved MRR and TechnicalScore without reducing public Hit Rate
+
+**Xu Zhihan**:Fix state-handling bugs in override detection and attribute classification. Correct benchmark documentation and reproducibility issues for submission.
+
+**Cao Yuewei**: Improved information gain from question category selection. Identified explicit user preference by distinguishing hard & soft requirements.

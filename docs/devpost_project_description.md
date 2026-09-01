@@ -46,41 +46,60 @@ The agent follows a stateful `Intent -> Preference Store -> Ranker` pipeline:
    being filled with near-duplicate products.
 6. **Adapt exploration to conversation progress.** While the agent has very little
    evidence, it shows only its two strongest examples and keeps clarifying instead of
-   prematurely returning ten weak guesses. After eight unsuccessful turns, a bounded
-   rank-quantile fallback explores a wider portion of the remaining high-ranked pool.
+   prematurely returning ten weak guesses. Once enough preferences are known, or the
+   early clarification window closes, it returns the full requested result count.
 
 ## How we built it
 
-We began with the organizer's stateless BM25-style starter, which achieved a public
-TechnicalScore of `0.106710`. We then iterated through state management, structured
-clarification, multi-route retrieval, reranking, non-repetition, override handling,
-title diversity, caching, and evidence-gated recommendation warmup.
+We began with the organizer's stateless BM25-style starter and iterated through state
+management, structured clarification, multi-route retrieval, reranking,
+non-repetition, override handling, title diversity, caching, and evidence-gated
+recommendation warmup.
 
 Experiments used a deterministic scenario-stratified development/holdout split. We
 also created two frozen 100-session audit sets whose target products do not overlap
-the 200 public targets. Candidate limits, diversity, warmup, retrieval routes, and
-late exploration were accepted only when they improved the cross-set mean and worst
-TechnicalScore without an unacceptable Hit-Rate loss. Rejected experiments remain
-documented so the reported result does not hide negative findings.
+the 200 public targets. Diversity, warmup, retrieval, and ranking variants were
+accepted only when they improved validation behavior without an unacceptable Hit-Rate
+loss. Rejected experiments remain documented in `progress.md` so the selected result
+does not hide negative findings.
 
-The current local public-set result is:
+The best accepted configuration is the deterministic default with
+`DEEPSEEK_MODE=off`:
 
-| Metric | Weak starter | Current agent |
-| --- | ---: | ---: |
-| Hit Rate@10 | 0.125 | **0.995** |
-| MRR | 0.068034 | **0.845121** |
-| MTTC | 9.81 | **2.540** |
-| TechnicalScore | 0.106710 | **0.920236** |
+| Dataset | Sessions | Hit Rate@10 | MRR | MTTC | Efficiency | TechnicalScore |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Public | 200 | **0.995** | **0.836357** | **2.540** | **0.846** | **0.917607** |
+| Generalization audit | 100 | **0.970** | **0.798806** | **2.900** | **0.810** | **0.886642** |
+| Category-gap audit | 100 | **1.000** | **0.842440** | **2.600** | **0.840** | **0.920732** |
 
-On the two disjoint 100-target audits, TechnicalScore is `0.896033` and `0.919490`,
-with Hit Rate@10 of `0.980` and `1.000`. These are participant-created robustness
-checks, not estimates of the organizer's private leaderboard.
+The two 100-target sets are participant-created robustness checks, not estimates of
+the organizer's private leaderboard. Lower scores from rejected model and retrieval
+experiments are retained in `progress.md`, not mixed into the accepted result above.
 
-We also profiled response time. Computing query-side signals once per turn reduced
-local evaluator time by approximately 16.9% with identical metrics. Reducing the
-broad retrieval cap from 1,200 to 600 candidates produced an additional approximately
-6.6% improvement in a paired holdout timing run. Exact timing varies by machine and
-SQLite build.
+## How to reproduce the verified result
+
+After completing the catalog download and checksum steps in `README.md`, run these
+commands from the repository root. Explicit `DEEPSEEK_MODE=off` prevents an API key or
+shell setting from changing the accepted configuration:
+
+```bash
+DEEPSEEK_MODE=off PYTHONHASHSEED=2 python3 -m unittest -v
+
+DEEPSEEK_MODE=off PYTHONHASHSEED=2 python3 -m evaluator.local_evaluator \
+  --output /tmp/techjam_public_results.json
+
+DEEPSEEK_MODE=off PYTHONHASHSEED=2 python3 -m evaluator.local_evaluator \
+  --dataset data/generalization_set.jsonl \
+  --output /tmp/techjam_generalization_results.json
+
+DEEPSEEK_MODE=off PYTHONHASHSEED=2 python3 -m evaluator.local_evaluator \
+  --dataset data/category_gap_set.jsonl \
+  --output /tmp/techjam_category_gap_results.json
+```
+
+The first command passes 25 tests. The three evaluator commands reproduce the table
+above when using the published catalog checksum. Runtime varies by CPU and SQLite
+build, so only the deterministic metrics are claimed.
 
 ## Development tools used
 
@@ -103,9 +122,9 @@ SQLite build.
   converts the current message and compact session context into validated intent and
   constraint fields; catalog search and ranking remain deterministic
 - The recommended public evaluation path makes zero model calls and works without
-  network access. A recorded 40-session forced-LLM audit used 47,709 tokens and had an
-  estimated cost of about `$0.0035`, but scored below the rule-first control, so
-  forcing an LLM call on every turn was rejected
+  network access. Forced LLM evaluation scored below the deterministic configuration
+  on the public and both disjoint audit sets, so calling the model on every turn was
+  rejected; full rejected-run details remain in `progress.md`
 - No OpenAI, Google Maps, or other external runtime API is required by the agent
 
 ## Libraries and frameworks used
@@ -118,7 +137,7 @@ uses the Python standard library, primarily:
 - **`json`, `re`, and `urllib`** for structured parsing, deterministic rules, and the
   optional DeepSeek HTTPS client
 - **`math` and standard collection utilities** for reranking and diversification
-- **`unittest`** for the 30-test regression suite
+- **`unittest`** for the 25-test regression suite
 - **`cProfile`** for response-time profiling
 
 No PyTorch, TensorFlow, Hugging Face Transformers, scikit-learn, pandas, vector
@@ -157,11 +176,10 @@ rankings without reducing public Hit Rate.
 
 We also learned that adding more retrieval routes or calling an LLM more often does
 not automatically improve the system. Forced DeepSeek parsing increased latency and
-reduced MRR on canonical messages. Similarly, aggressive late candidate expansion
-and several conjunctive retrieval variants were rejected because they did not improve
-both average and worst-set performance. The most valuable improvements came from
-careful state handling, deterministic ranking features, measured exploration, and
-honest cross-set validation.
+reduced MRR on canonical messages. Several broader retrieval and hand-tuned ranking
+variants were also rejected when they failed validation. The most valuable
+improvements came from careful state handling, deterministic ranking features,
+measured exploration, and honest cross-set validation.
 
 ## What is next
 
